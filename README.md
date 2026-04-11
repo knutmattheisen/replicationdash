@@ -1,4 +1,4 @@
-# MergeDash v0.1 — SQL Server Merge Replication Dashboard
+# MergeDash v0.1.2 — SQL Server Merge Replication Dashboard
 
 Portable, zero-install DBA tool for near real-time monitoring of bidirectional MS SQL Server Merge Replication.
 Single Windows executable. No Node.js, Python, .NET runtime or installer required.

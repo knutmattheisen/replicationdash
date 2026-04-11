@@ -1,0 +1,16 @@
+{
+  "listen_port": 9090,
+  "refresh_seconds": 10,
+  "default_server": "Demo (Mock)",
+  "servers": [
+    {
+      "name": "Demo (Mock)",
+      "host": "localhost",
+      "port": 1433,
+      "instance": "",
+      "auth_mode": "mock",
+      "distribution_db": "distribution",
+      "publication_db": "AdventureWorks"
+    }
+  ]
+}

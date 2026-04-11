@@ -1,4 +1,4 @@
-module mergedash
+module replicationdash
 
 go 1.21
 

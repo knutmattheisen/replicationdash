@@ -1,25 +1,31 @@
-# MergeDash v0.1.2 — SQL Server Merge Replication Dashboard
+# ReplicationDash v0.2.0 — SQL Server Replication Dashboard
 
-Portable, zero-install DBA tool for near real-time monitoring of bidirectional MS SQL Server Merge Replication.
+Portable, zero-install DBA tool for near real-time monitoring of SQL Server Merge Replication.
 Single Windows executable. No Node.js, Python, .NET runtime or installer required.
+
+by **DBo**
 
 ---
 
 ## Features
 
-* **Server management via UI** — add, switch and remove SQL Server targets directly in the dashboard
+* **Topology visualization** — automatic discovery of Publisher, Distributor and Subscribers with visual pipeline display
+* **Bidirectional arrows** — separate Upload/Download status indicators per connection
+* **Status cards per publication/subscriber** — instant overview with color-coded health (green/yellow/red)
+* **Root cause classification** — automatic analysis: ⚙️ Systemisch (hardware/network) vs 👤 Nutzungsspezifisch (user error/config) with explanation
+* **Health Ampel** — green/yellow/red with mouseover tooltip explaining current status
 * **Merge Session monitoring** — MSmerge_sessions with duration, delivery rates, upload/download counts, error tracking
 * **Conflict detection** — counts and displays conflicts from all MSmerge_conflict_* tables
 * **Blocking chain analysis** — blocked/blocking sessions with SQL text, filtered for replication agents (replmerg.exe)
-* **Health Ampel** — green/yellow/red with mouseover tooltip explaining current status and reasons
 * **Troubleshooting system** — click on warnings for slide-in panel with problem description, causes and solutions
-* **Mock mode** — realistic demo data without real SQL Server connection
+* **Mock mode** — fixed topology with realistic demo data, no real SQL Server needed
 * **Sortable columns** — click any column header to sort ascending/descending
 * **Resizable columns** — drag column header edges to resize
 * **Copy to clipboard** — click any table cell to copy its value
 * **Auto-refresh** — configurable 5s/10s/30s/60s/Pause
 * **Dark mode** — professional dark theme
-* **TLS encrypted connections** — all SQL Server connections use encrypted transport (Encrypt=true)
+* **TLS encrypted connections** — all SQL Server connections use Encrypt=true
+* **Server management via UI** — add, switch and remove SQL Server targets directly in the dashboard
 
 ---
 
@@ -37,9 +43,9 @@ Single Windows executable. No Node.js, Python, .NET runtime or installer require
 
 ## Deployment
 
-1. Download `mergedash.exe` from GitHub Releases
-2. Place `mergedash.exe` in any folder on your admin PC
-3. Double-click `mergedash.exe`
+1. Download `replicationdash.exe` from GitHub Releases
+2. Place it in any folder on your admin PC
+3. Double-click `replicationdash.exe`
 4. Open browser: **http://localhost:9090**
 5. Click **+ Add Server** to connect your first SQL Server instance
 
@@ -49,44 +55,50 @@ Connection settings are saved automatically to `servers.json` in the same folder
 
 ## Mock / Demo Mode
 
-To test MergeDash without a real SQL Server:
+To test ReplicationDash without a real SQL Server:
 
 1. Click **+ Add Server**
 2. Set **Authentifizierung** to **Mock (Demo)**
 3. Give it any name (e.g. "Demo Server")
 4. Click **Verbinden**
 
-The mock mode generates realistic test data including:
-- Sessions with mixed statuses (Succeeded, Failed, Retry, InProgress)
-- High latency scenarios (> 5 minutes)
-- Merge conflicts (Update, Delete, Insert-Unique)
-- Blocking chains where replmerg.exe is blocked by developer tools
+The mock mode uses a fixed topology (1 Publisher, 2 Subscribers, 4 Publications) and generates realistic scenarios including failed sessions, conflicts, and blocking chains.
 
 A default mock server is created automatically on first start.
 
 ---
 
-## What MergeDash Monitors
+## What ReplicationDash Monitors
 
 | Area              | Source                                              |
 |------------------|------------------------------------------------------|
+| Topology         | `MSpublications` + `MSsubscriptions` (distribution DB) |
 | Merge Sessions   | `MSmerge_sessions` + `MSmerge_history` (distribution DB) |
 | Conflicts        | `MSmerge_conflict_*` tables (publication DB)          |
 | Blocking         | `sys.dm_exec_requests` + `sys.dm_exec_sessions` (master) |
 
-**Time window:** Last 60 minutes only. MergeDash focuses on the current state, not historical trends.
+**Time window:** Last 60 minutes. Publisher + Distributor are assumed to be on the same server.
 
-**Publisher + Distributor** are assumed to be on the same server.
+---
+
+## Root Cause Classification
+
+ReplicationDash automatically analyzes problems and classifies them:
+
+| Icon | Type | Examples |
+|------|------|----------|
+| ⚙️ | **Systemisch** | I/O bottleneck, network latency, timeout, server overload |
+| 👤 | **Nutzungsspezifisch** | SSMS without COMMIT, ETL job blocking, RBAR updates, missing data ownership |
+
+The classification is shown in the header and explains *why* there is a problem and *what to do about it*.
 
 ---
 
 ## Permissions (minimum required)
 
 ```sql
--- On the monitored SQL Server instance:
 GRANT VIEW SERVER STATE TO [your_login];
 
--- On the distribution database:
 USE [distribution];
 GRANT SELECT ON MSmerge_sessions TO [your_login];
 GRANT SELECT ON MSmerge_agents TO [your_login];
@@ -94,89 +106,9 @@ GRANT SELECT ON MSmerge_history TO [your_login];
 GRANT SELECT ON MSpublications TO [your_login];
 GRANT SELECT ON MSsubscriptions TO [your_login];
 
--- On the publication database:
 USE [YourPublicationDB];
-GRANT SELECT ON SCHEMA::dbo TO [your_login]; -- for MSmerge_conflict_* tables
+GRANT SELECT ON SCHEMA::dbo TO [your_login];
 ```
-
----
-
-## servers.json (auto-managed)
-
-The file is written automatically by the UI. You can also edit it manually:
-
-```json
-{
-  "listen_port": 9090,
-  "refresh_seconds": 10,
-  "default_server": "PROD-SQL01",
-  "servers": [
-    {
-      "name": "PROD-SQL01",
-      "host": "PROD-SQL01.domain.local",
-      "port": 1433,
-      "instance": "",
-      "auth_mode": "windows",
-      "distribution_db": "distribution",
-      "publication_db": "SalesDB"
-    },
-    {
-      "name": "DEV-SQL01",
-      "host": "192.168.1.50",
-      "port": 1433,
-      "instance": "",
-      "auth_mode": "sql",
-      "user": "mergedash_reader",
-      "password": "YourPassword",
-      "distribution_db": "distribution",
-      "publication_db": "SalesDB"
-    },
-    {
-      "name": "Demo (Mock)",
-      "host": "localhost",
-      "port": 1433,
-      "auth_mode": "mock",
-      "distribution_db": "distribution",
-      "publication_db": "AdventureWorks"
-    }
-  ]
-}
-```
-
-| Field            | Values                    | Notes                              |
-|-----------------|---------------------------|------------------------------------|
-| auth_mode       | `"windows"`, `"sql"`, `"mock"` | Mock generates test data        |
-| instance        | `""` or `"INST_NAME"`     | Named instance, blank = default    |
-| distribution_db | `"distribution"`          | Name of the distribution database  |
-| publication_db  | `"YourDB"`                | Name of the published database     |
-
----
-
-## Health Ampel Logic
-
-| Level  | Conditions                                                  |
-|--------|-------------------------------------------------------------|
-| 🟢 Green  | All sessions normal, no blocking, < 5 conflicts          |
-| 🟡 Yellow | High latency (> 5 min), > 5 conflicts, no recent sessions |
-| 🔴 Red    | Failed sessions, replication agent blocked                 |
-
-Hover over the ampel to see the exact reasons.
-
----
-
-## Troubleshooting System
-
-Click on highlighted cells (yellow = warning, red = critical) to open the troubleshooting panel:
-
-| Trigger                | Opens                              |
-|-----------------------|------------------------------------|
-| Duration > 300s       | "Hohe Merge-Latenz"               |
-| Error count > 0       | "Merge-Session fehlgeschlagen"     |
-| Update conflict       | "Update-Konflikte"                 |
-| Delete conflict       | "Delete-Konflikte"                 |
-| Repl agent blocked    | "Replication Agent wird blockiert" |
-
-Each entry contains: problem description, possible causes, and concrete solutions.
 
 ---
 
@@ -189,16 +121,10 @@ Requirements: Go 1.21 or later
 build.bat
 ```
 
-**Linux / WSL (cross-compile for Windows):**
-```
-chmod +x build.sh
-./build.sh
-```
-
 **Manual:**
 ```
 go mod tidy
-GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w -H windowsgui" -o mergedash.exe .
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w -H windowsgui" -o replicationdash.exe .
 ```
 
 ---
@@ -206,24 +132,32 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w -H windowsgui" 
 ## Architecture
 
 ```
-[Browser] ──── HTTP ──── [mergedash.exe :9090] ──── TLS/SQL ──── [SQL Server]
+[Browser] ──── HTTP ──── [replicationdash.exe :9090] ──── TLS/SQL ──── [SQL Server]
                           │
                           ├─ Serves HTML/CSS/JS (embedded in binary)
                           ├─ /api/* endpoints
                           └─ servers.json (auto-managed config)
 ```
 
-The executable embeds all frontend assets. Only `mergedash.exe` needed to run.
-`servers.json` is created automatically on first server connection.
-
 ---
 
-## What MergeDash is NOT
+## Changelog
 
-* Not a historical trend database — monitors the last 60 minutes only
-* Not a replacement for Replication Monitor in SSMS — focuses on key metrics and blocking
-* Not designed for Transactional or Snapshot replication — Merge Replication only
-* Not a production monitoring service — built for DBA admin workstations
+### v0.2.0
+* Renamed from MergeDash to **ReplicationDash by DBo**
+* Topology visualization with automatic discovery
+* Bidirectional Upload/Download arrows per connection
+* Status cards computed server-side with fixed topology
+* Root cause classification (Systemisch vs Nutzungsspezifisch)
+* Fixed mock mode with stable topology (no more random card count)
+* Fixed card color bug (blocking no longer turns all cards red)
+* Collapsible detail sections
+* Version number consistent across all files
+
+### v0.1.x
+* Initial release as MergeDash
+* Basic session, conflict and blocking monitoring
+* Mock mode, troubleshooting panel, dark theme
 
 ---
 

@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════
-   MergeDash v0.1 — Frontend Application
-   Status cards on top, detail tables always visible below
+   ReplicationDash v0.2.0 — Frontend Application
+   Topology pipeline, status cards from backend, root cause
    ═══════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -30,9 +30,8 @@
 
     // ── Refresh ────────────────────────────────────────────────
     function setupRefreshControl() {
-        const sel = $('#refresh-select');
-        sel.addEventListener('change', () => {
-            refreshInterval = parseInt(sel.value);
+        $('#refresh-select').addEventListener('change', function () {
+            refreshInterval = parseInt(this.value);
             startRefresh();
         });
     }
@@ -46,12 +45,10 @@
 
     // ── Server Control ─────────────────────────────────────────
     function setupServerControl() {
-        const sel = $('#server-select');
-        sel.addEventListener('change', async () => {
-            const name = sel.value;
-            if (!name) return;
+        $('#server-select').addEventListener('change', async function () {
+            if (!this.value) return;
             try {
-                const r = await fetch('/api/switch?name=' + encodeURIComponent(name));
+                const r = await fetch('/api/switch?name=' + encodeURIComponent(this.value));
                 const d = await r.json();
                 if (d.error) throw new Error(d.error);
                 fetchData();
@@ -77,12 +74,11 @@
         });
     }
 
-    // ── Collapsible Sections ───────────────────────────────────
+    // ── Section Toggles ────────────────────────────────────────
     function setupSectionToggles() {
         $$('.section-header').forEach(hdr => {
             hdr.addEventListener('click', () => {
-                const targetId = hdr.dataset.toggle;
-                const body = document.getElementById(targetId);
+                const body = document.getElementById(hdr.dataset.toggle);
                 if (!body) return;
                 hdr.classList.toggle('collapsed');
                 body.classList.toggle('collapsed');
@@ -112,9 +108,11 @@
 
             updateServerDropdown(data.available_servers, data.current_server);
             updateHealth(data.health);
+            updateRootCause(data.root_cause);
             updateTimestamp(data.timestamp);
             updateBadges(data);
-            renderStatusCards(data);
+            renderTopology(data.topology, data.cards);
+            renderStatusCards(data.cards);
             renderSessions(data.sessions);
             renderConflicts(data.conflicts);
             renderBlocking(data.blocking);
@@ -125,32 +123,45 @@
 
     function showNoServers(show) {
         const msg = $('#no-servers-msg');
-        const cards = $('#status-cards');
-        const sections = $$('.detail-section');
+        const sections = [
+            $('#topology-section'),
+            $('#status-cards'),
+            ...$$('.detail-section')
+        ];
         if (show) {
             msg.classList.remove('hidden');
-            cards.classList.add('hidden');
-            sections.forEach(s => s.classList.add('hidden'));
+            sections.forEach(s => { if (s) s.classList.add('hidden'); });
         } else {
             msg.classList.add('hidden');
-            cards.classList.remove('hidden');
-            sections.forEach(s => s.classList.remove('hidden'));
+            sections.forEach(s => { if (s) s.classList.remove('hidden'); });
         }
     }
 
     // ── Health Ampel ───────────────────────────────────────────
     function updateHealth(health) {
         const el = $('#health-indicator');
-        const text = el.querySelector('.health-text');
-        const tooltip = $('#health-tooltip');
+        el.querySelector('.health-text').textContent = health.summary;
         el.dataset.level = health.level;
-        text.textContent = health.summary;
 
-        let html = '<div class="tt-title">' + escHtml(health.summary) + '</div>';
+        let html = '<div class="tt-title">' + esc(health.summary) + '</div>';
         (health.details || []).forEach(d => {
-            html += '<div class="tt-item">' + escHtml(d) + '</div>';
+            html += '<div class="tt-item">' + esc(d) + '</div>';
         });
-        tooltip.innerHTML = html;
+        $('#health-tooltip').innerHTML = html;
+    }
+
+    // ── Root Cause Indicator ───────────────────────────────────
+    function updateRootCause(rc) {
+        const el = $('#root-cause-indicator');
+        if (!rc) {
+            el.classList.add('hidden');
+            return;
+        }
+        el.classList.remove('hidden');
+        el.dataset.type = rc.type;
+        el.querySelector('.rc-icon').textContent = rc.icon;
+        el.querySelector('.rc-label').textContent = rc.label;
+        el.querySelector('.rc-tooltip').textContent = rc.explanation;
     }
 
     function updateTimestamp(ts) {
@@ -158,177 +169,197 @@
     }
 
     function updateBadges(data) {
-        const bSess = $('#badge-sessions');
-        const bConf = $('#badge-conflicts');
-        const bBlock = $('#badge-blocking');
-
-        bSess.textContent = data.session_count || 0;
-        bConf.textContent = data.conflict_count || 0;
-        bBlock.textContent = data.blocking_count || 0;
-
-        bSess.className = 'badge' + (data.failed_sessions > 0 ? ' crit' : '');
-        bConf.className = 'badge' + (data.conflict_count > 5 ? ' warn' : data.conflict_count > 0 ? ' warn' : '');
-        bBlock.className = 'badge' + (data.blocking_count > 0 ? ' crit' : '');
+        const bS = $('#badge-sessions');
+        const bC = $('#badge-conflicts');
+        const bB = $('#badge-blocking');
+        bS.textContent = data.session_count || 0;
+        bC.textContent = data.conflict_count || 0;
+        bB.textContent = data.blocking_count || 0;
+        bS.className = 'badge' + (data.failed_sessions > 0 ? ' crit' : '');
+        bC.className = 'badge' + (data.conflict_count > 5 ? ' warn' : data.conflict_count > 0 ? ' warn' : '');
+        bB.className = 'badge' + (data.blocking_count > 0 ? ' crit' : '');
     }
 
     // ═══════════════════════════════════════════════════════════
-    // STATUS CARDS — aggregated per publication + subscriber
+    // TOPOLOGY PIPELINE
     // ═══════════════════════════════════════════════════════════
 
-    function renderStatusCards(data) {
-        const container = $('#cards-container');
-        const sessions = data.sessions || [];
-        const conflicts = data.conflicts || [];
-        const blocking = data.blocking || [];
-
-        if (sessions.length === 0) {
-            container.innerHTML =
-                '<div class="status-card no-data">' +
-                '<span class="no-data-icon">⏸</span>' +
-                '<span class="no-data-text">Keine Merge-Sessions in den letzten 60 Minuten</span>' +
-                '</div>';
+    function renderTopology(topo, cards) {
+        const container = $('#topology-pipeline');
+        if (!topo || !topo.nodes || topo.nodes.length === 0) {
+            container.innerHTML = '';
             return;
         }
 
-        // Group sessions by publication + subscriber
-        const groups = {};
-        sessions.forEach(s => {
-            const key = (s.publication_name || '?') + ' → ' + (s.subscriber || '?');
-            if (!groups[key]) {
-                groups[key] = {
-                    pub: s.publication_name || '?',
-                    sub: s.subscriber || '?',
-                    sessions: [],
-                    lastStatus: null,
-                    lastDuration: 0,
-                    maxDuration: 0,
-                    totalErrors: 0,
-                    totalUploads: 0,
-                    totalDownloads: 0,
-                    lastMessage: '',
-                    lastStart: ''
-                };
-            }
-            const g = groups[key];
-            g.sessions.push(s);
-            g.totalErrors += (s.error_count || 0);
-            g.totalUploads += (s.upload_inserts || 0) + (s.upload_updates || 0) + (s.upload_deletes || 0);
-            g.totalDownloads += (s.download_inserts || 0) + (s.download_updates || 0) + (s.download_deletes || 0);
+        // Sort nodes by weight (publisher first, then subscribers)
+        const nodes = [...topo.nodes].sort((a, b) => a.weight - b.weight);
+        const links = topo.links || [];
 
-            const dur = s.duration_seconds || 0;
-            if (dur > g.maxDuration) g.maxDuration = dur;
+        // Compute per-node status from cards
+        const nodeStatus = {};
+        nodes.forEach(n => { nodeStatus[n.server_name] = 'green'; });
 
-            // Track the most recent session
-            if (!g.lastStart || s.start_time > g.lastStart) {
-                g.lastStart = s.start_time;
-                g.lastStatus = s.run_status;
-                g.lastDuration = dur;
-                g.lastMessage = s.last_message || '';
+        (cards || []).forEach(c => {
+            if (c.level === 'red') {
+                nodeStatus[c.subscriber] = 'red';
+                // Publisher is affected too if any sub is red
+                nodes.forEach(n => {
+                    if (n.role === 'publisher_distributor') {
+                        if (nodeStatus[n.server_name] !== 'red') {
+                            nodeStatus[n.server_name] = worstLevel(nodeStatus[n.server_name], 'yellow');
+                        }
+                    }
+                });
+            } else if (c.level === 'yellow') {
+                nodeStatus[c.subscriber] = worstLevel(nodeStatus[c.subscriber], 'yellow');
             }
         });
 
-        // Count conflicts per origin
-        const conflictCounts = {};
-        conflicts.forEach(c => {
-            const origin = c.origin_datasource || '?';
-            conflictCounts[origin] = (conflictCounts[origin] || 0) + 1;
-        });
+        const roleIcons = {
+            'publisher_distributor': '🖥️',
+            'publisher': '📤',
+            'distributor': '🔀',
+            'subscriber': '📥'
+        };
 
-        // Count blocking per subscriber-related program
-        const blockingCount = blocking.length;
+        // Find publisher (first node)
+        const pubNode = nodes.find(n => n.role === 'publisher_distributor' || n.role === 'publisher');
+        const subNodes = nodes.filter(n => n.role === 'subscriber');
 
-        // Build cards
         let html = '';
-        const sortedKeys = Object.keys(groups).sort();
 
-        sortedKeys.forEach(key => {
-            const g = groups[key];
-            const level = cardLevel(g, conflictCounts, blockingCount);
-            const statusInfo = cardStatusInfo(g);
-            const conflictsForSub = conflictCounts[g.sub] || 0;
+        // Publisher node
+        if (pubNode) {
+            const st = nodeStatus[pubNode.server_name] || 'green';
+            html += renderTopoNode(pubNode, st, roleIcons);
+        }
 
-            html += '<div class="status-card" data-level="' + level + '">';
+        // For each subscriber: arrows + node
+        subNodes.forEach(sub => {
+            const st = nodeStatus[sub.server_name] || 'green';
 
-            // Header: pub name + status badge
-            html += '<div class="card-header">';
-            html += '<div class="card-pub-name">' + escHtml(g.pub) + '</div>';
-            html += '<span class="card-status-badge ' + statusInfo.cls + '">' + statusInfo.text + '</span>';
+            // Find links for this subscriber
+            const subLinks = links.filter(l => l.to === sub.server_name);
+
+            // Determine arrow statuses from cards
+            let uploadStatus = 'ok';
+            let downloadStatus = 'ok';
+            (cards || []).forEach(c => {
+                if (c.subscriber === sub.server_name) {
+                    uploadStatus = worstArrowStatus(uploadStatus, c.upload_status);
+                    downloadStatus = worstArrowStatus(downloadStatus, c.download_status);
+                }
+            });
+
+            // Arrows
+            html += '<div class="topo-arrows">';
+            html += '<div class="topo-arrow" data-status="' + downloadStatus + '">';
+            html += '<span class="topo-arrow-label">Download</span>';
+            html += '<span class="topo-arrow-head">→</span>';
+            html += '<span class="topo-arrow-line"></span>';
+            html += '</div>';
+            html += '<div class="topo-arrow" data-status="' + uploadStatus + '">';
+            html += '<span class="topo-arrow-line"></span>';
+            html += '<span class="topo-arrow-head">←</span>';
+            html += '<span class="topo-arrow-label">Upload</span>';
+            html += '</div>';
             html += '</div>';
 
-            // Subscriber
-            html += '<div class="card-subscriber">→ ' + escHtml(g.sub) + '</div>';
-
-            // Metrics
-            html += '<div class="card-metrics">';
-
-            // Duration
-            const durClass = g.maxDuration > 300 ? 'v-red' : g.maxDuration > 120 ? 'v-yellow' : 'v-green';
-            html += '<div class="card-metric">';
-            html += '<div class="card-metric-value ' + durClass + '">' + formatDuration(g.maxDuration) + '</div>';
-            html += '<div class="card-metric-label">Max Dauer</div>';
-            html += '</div>';
-
-            // Errors
-            const errClass = g.totalErrors > 0 ? 'v-red' : 'v-green';
-            html += '<div class="card-metric">';
-            html += '<div class="card-metric-value ' + errClass + '">' + g.totalErrors + '</div>';
-            html += '<div class="card-metric-label">Errors</div>';
-            html += '</div>';
-
-            // Conflicts
-            const confClass = conflictsForSub > 0 ? 'v-yellow' : 'v-muted';
-            html += '<div class="card-metric">';
-            html += '<div class="card-metric-value ' + confClass + '">' + conflictsForSub + '</div>';
-            html += '<div class="card-metric-label">Konflikte</div>';
-            html += '</div>';
-
-            html += '</div>'; // card-metrics
-
-            // Footer: last message
-            if (g.lastMessage) {
-                const msgClass = g.totalErrors > 0 ? 'msg-error' : '';
-                html += '<div class="card-footer"><span class="' + msgClass + '">' + escHtml(g.lastMessage) + '</span></div>';
-            }
-
-            html += '</div>'; // status-card
+            // Subscriber node
+            html += renderTopoNode(sub, st, roleIcons);
         });
 
         container.innerHTML = html;
     }
 
-    function cardLevel(group, conflictCounts, blockingCount) {
-        // Red: failed session, or errors
-        if (group.lastStatus === 6 || group.totalErrors > 0) return 'red';
-        // Red: blocking active
-        if (blockingCount > 0) return 'red';
-        // Yellow: high latency or retrying
-        if (group.maxDuration > 300 || group.lastStatus === 5) return 'yellow';
-        // Yellow: conflicts
-        const confCount = conflictCounts[group.sub] || 0;
-        if (confCount > 0) return 'yellow';
-        // Green
-        return 'green';
+    function renderTopoNode(node, status, icons) {
+        const icon = icons[node.role] || '🖥️';
+        return '<div class="topo-node" data-status="' + status + '">' +
+            '<div class="topo-node-status-dot ' + status + '"></div>' +
+            '<div class="topo-node-icon">' + icon + '</div>' +
+            '<div class="topo-node-name">' + esc(node.server_name) + '</div>' +
+            '<div class="topo-node-role">' + esc(node.role_label) + '</div>' +
+            '</div>';
     }
 
-    function cardStatusInfo(group) {
-        const st = group.lastStatus;
-        if (st === 6) return { text: 'FAILED', cls: 's-crit' };
-        if (st === 5) return { text: 'RETRY', cls: 's-warn' };
-        if (st === 3 || st === 1) return { text: 'RUNNING', cls: 's-running' };
-        if (group.totalErrors > 0) return { text: 'ERRORS', cls: 's-crit' };
-        if (group.maxDuration > 300) return { text: 'SLOW', cls: 's-warn' };
-        if (st === 2) return { text: 'OK', cls: 's-ok' };
-        return { text: 'IDLE', cls: 's-ok' };
+    function worstLevel(a, b) {
+        const order = { green: 0, yellow: 1, red: 2 };
+        return (order[b] || 0) > (order[a] || 0) ? b : a;
+    }
+
+    function worstArrowStatus(a, b) {
+        const order = { ok: 0, running: 1, warn: 2, error: 3 };
+        return (order[b] || 0) > (order[a] || 0) ? b : a;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // STATUS CARDS (from backend-computed data)
+    // ═══════════════════════════════════════════════════════════
+
+    function renderStatusCards(cards) {
+        const container = $('#cards-container');
+
+        if (!cards || cards.length === 0) {
+            container.innerHTML =
+                '<div class="status-card no-data">' +
+                '<span class="no-data-icon">⏸</span>' +
+                '<span class="no-data-text">Keine Replikations-Topologie erkannt</span>' +
+                '</div>';
+            return;
+        }
+
+        let html = '';
+        cards.forEach(c => {
+            html += '<div class="status-card" data-level="' + c.level + '">';
+
+            html += '<div class="card-header">';
+            html += '<div class="card-pub-name">' + esc(c.publication) + '</div>';
+            html += '<span class="card-status-badge ' + c.status_class + '">' + esc(c.status_text) + '</span>';
+            html += '</div>';
+
+            html += '<div class="card-subscriber">→ ' + esc(c.subscriber) + '</div>';
+
+            html += '<div class="card-metrics">';
+
+            const durClass = c.max_duration > 300 ? 'v-red' : c.max_duration > 120 ? 'v-yellow' : 'v-green';
+            html += '<div class="card-metric">';
+            html += '<div class="card-metric-value ' + durClass + '">' + formatDuration(c.max_duration) + '</div>';
+            html += '<div class="card-metric-label">Max Dauer</div>';
+            html += '</div>';
+
+            const errClass = c.total_errors > 0 ? 'v-red' : 'v-green';
+            html += '<div class="card-metric">';
+            html += '<div class="card-metric-value ' + errClass + '">' + c.total_errors + '</div>';
+            html += '<div class="card-metric-label">Errors</div>';
+            html += '</div>';
+
+            const confClass = c.conflict_count > 0 ? 'v-yellow' : 'v-muted';
+            html += '<div class="card-metric">';
+            html += '<div class="card-metric-value ' + confClass + '">' + c.conflict_count + '</div>';
+            html += '<div class="card-metric-label">Konflikte</div>';
+            html += '</div>';
+
+            html += '</div>';
+
+            if (c.last_message) {
+                const msgClass = c.total_errors > 0 ? 'msg-error' : '';
+                html += '<div class="card-footer"><span class="' + msgClass + '">' + esc(c.last_message) + '</span></div>';
+            }
+
+            html += '</div>';
+        });
+
+        container.innerHTML = html;
     }
 
     function formatDuration(seconds) {
+        if (!seconds) return '—';
         if (seconds < 60) return seconds + 's';
         const min = Math.floor(seconds / 60);
         const sec = seconds % 60;
         if (min < 60) return min + 'm ' + sec + 's';
         const hrs = Math.floor(min / 60);
-        const remMin = min % 60;
-        return hrs + 'h ' + remMin + 'm';
+        return hrs + 'h ' + (min % 60) + 'm';
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -347,14 +378,14 @@
             const statusClass = getStatusClass(s.run_status_text);
             const durClass = (s.duration_seconds > 300) ? 'cell-warn' : '';
             const errClass = (s.error_count > 0) ? 'cell-crit' : '';
-            const durClick = (s.duration_seconds > 300) ? ' data-ts-trigger="latency_high"' : '';
-            const errClick = (s.error_count > 0 && s.run_status === 6) ? ' data-ts-trigger="session_error"' : '';
+            const durTrigger = (s.duration_seconds > 300) ? ' data-ts-trigger="latency_high"' : '';
+            const errTrigger = (s.error_count > 0 && s.run_status === 6) ? ' data-ts-trigger="session_error"' : '';
 
             html += '<tr>';
             html += td(s.publication_name);
             html += td(s.subscriber);
-            html += '<td class="' + statusClass + '">' + escHtml(s.run_status_text) + '</td>';
-            html += '<td class="' + durClass + '"' + durClick + '>' + fmtNum(s.duration_seconds) + '</td>';
+            html += '<td class="' + statusClass + '">' + esc(s.run_status_text) + '</td>';
+            html += '<td class="' + durClass + '"' + durTrigger + '>' + fmtNum(s.duration_seconds) + '</td>';
             html += td(fmtFloat(s.delivery_rate));
             html += td(fmtNum(s.upload_inserts));
             html += td(fmtNum(s.upload_updates));
@@ -362,7 +393,7 @@
             html += td(fmtNum(s.download_inserts));
             html += td(fmtNum(s.download_updates));
             html += td(fmtNum(s.download_deletes));
-            html += '<td class="' + errClass + '"' + errClick + '>' + fmtNum(s.error_count) + '</td>';
+            html += '<td class="' + errClass + '"' + errTrigger + '>' + fmtNum(s.error_count) + '</td>';
             html += td(s.start_time);
             html += td(s.last_message);
             html += '</tr>';
@@ -381,13 +412,13 @@
         let html = '';
         sorted.forEach(c => {
             const typeText = c.conflict_type_text || '';
-            const isTrigger = typeText.includes('Update') ? 'conflict_update' : typeText.includes('Delete') ? 'conflict_delete' : '';
-            const cls = isTrigger ? 'cell-warn' : '';
-            const tsTrigger = isTrigger ? ' data-ts-trigger="' + isTrigger + '"' : '';
+            const trigger = typeText.includes('Update') ? 'conflict_update' : typeText.includes('Delete') ? 'conflict_delete' : '';
+            const cls = trigger ? 'cell-warn' : '';
+            const tsAttr = trigger ? ' data-ts-trigger="' + trigger + '"' : '';
             html += '<tr>';
             html += td(c.conflict_table);
             html += td(c.origin_datasource);
-            html += '<td class="' + cls + '"' + tsTrigger + '>' + escHtml(typeText) + '</td>';
+            html += '<td class="' + cls + '"' + tsAttr + '>' + esc(typeText) + '</td>';
             html += td(c.reason_text);
             html += td(c.create_time);
             html += '</tr>';
@@ -408,12 +439,12 @@
             const replRelated = (b.replication_related === 1 || b.replication_related === true);
             const replClass = replRelated ? 'repl-yes' : 'repl-no';
             const waitClass = (b.wait_time_ms > 30000) ? 'cell-crit' : (b.wait_time_ms > 5000) ? 'cell-warn' : '';
-            const tsTrigger = replRelated ? ' data-ts-trigger="blocking_repl_agent"' : '';
+            const tsAttr = replRelated ? ' data-ts-trigger="blocking_repl_agent"' : '';
             html += '<tr>';
             html += td(b.blocked_spid);
             html += td(b.blocking_spid);
             html += td(b.wait_type);
-            html += '<td class="' + waitClass + '"' + tsTrigger + '>' + fmtNum(b.wait_time_ms) + '</td>';
+            html += '<td class="' + waitClass + '"' + tsAttr + '>' + fmtNum(b.wait_time_ms) + '</td>';
             html += td(b.blocked_program);
             html += td(b.blocker_program);
             html += td(b.blocker_host);
@@ -429,15 +460,15 @@
 
     // ── Cell handlers ──────────────────────────────────────────
     function attachCellHandlers(tbody) {
-        tbody.querySelectorAll('td').forEach(td => {
-            td.addEventListener('click', () => {
-                const trigger = td.dataset.tsTrigger;
+        tbody.querySelectorAll('td').forEach(cell => {
+            cell.addEventListener('click', () => {
+                const trigger = cell.dataset.tsTrigger;
                 if (trigger) { openTroubleshooting(trigger); return; }
-                const text = td.textContent;
+                const text = cell.textContent;
                 navigator.clipboard.writeText(text).then(() => {
-                    td.classList.add('copied');
+                    cell.classList.add('copied');
                     showToast('Kopiert: ' + text.substring(0, 80));
-                    setTimeout(() => td.classList.remove('copied'), 400);
+                    setTimeout(() => cell.classList.remove('copied'), 400);
                 });
             });
         });
@@ -448,22 +479,19 @@
         const state = sortState[tableId];
         if (!state) return data;
         const arr = [...data];
-        const col = state.col;
-        const dir = state.dir;
-        const isNum = state.isNum;
         arr.sort((a, b) => {
-            let va = a[col], vb = b[col];
+            let va = a[state.col], vb = b[state.col];
             if (va == null) va = '';
             if (vb == null) vb = '';
-            if (isNum) {
+            if (state.isNum) {
                 va = parseFloat(va) || 0;
                 vb = parseFloat(vb) || 0;
-                return dir === 'asc' ? va - vb : vb - va;
+                return state.dir === 'asc' ? va - vb : vb - va;
             }
             va = String(va).toLowerCase();
             vb = String(vb).toLowerCase();
-            if (va < vb) return dir === 'asc' ? -1 : 1;
-            if (va > vb) return dir === 'asc' ? 1 : -1;
+            if (va < vb) return state.dir === 'asc' ? -1 : 1;
+            if (va > vb) return state.dir === 'asc' ? 1 : -1;
             return 0;
         });
         return arr;
@@ -511,20 +539,12 @@
 
             let startX, startWidth;
             handle.addEventListener('mousedown', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                startX = e.pageX;
-                startWidth = th.offsetWidth;
-                const onMouseMove = (e2) => {
-                    th.style.width = Math.max(40, startWidth + e2.pageX - startX) + 'px';
-                    th.style.minWidth = th.style.width;
-                };
-                const onMouseUp = () => {
-                    document.removeEventListener('mousemove', onMouseMove);
-                    document.removeEventListener('mouseup', onMouseUp);
-                };
-                document.addEventListener('mousemove', onMouseMove);
-                document.addEventListener('mouseup', onMouseUp);
+                e.preventDefault(); e.stopPropagation();
+                startX = e.pageX; startWidth = th.offsetWidth;
+                const onMove = (e2) => { th.style.width = Math.max(40, startWidth + e2.pageX - startX) + 'px'; th.style.minWidth = th.style.width; };
+                const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
             });
         });
     }
@@ -532,21 +552,15 @@
     // ── Modal ──────────────────────────────────────────────────
     function setupModal() {
         const overlay = $('#modal-overlay');
-        const btnAdd = $('#btn-add-server');
-        const btnClose = $('#modal-close');
-        const btnSave = $('#btn-save-server');
-        const btnRemove = $('#btn-remove-server');
-        const authSel = $('#srv-auth');
-
-        btnAdd.addEventListener('click', () => { clearModalFields(); overlay.classList.remove('hidden'); });
-        btnClose.addEventListener('click', () => overlay.classList.add('hidden'));
+        $('#btn-add-server').addEventListener('click', () => { clearModal(); overlay.classList.remove('hidden'); });
+        $('#modal-close').addEventListener('click', () => overlay.classList.add('hidden'));
         overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.add('hidden'); });
 
-        authSel.addEventListener('change', () => {
-            $('#sql-auth-fields').classList.toggle('hidden', authSel.value !== 'sql');
+        $('#srv-auth').addEventListener('change', function () {
+            $('#sql-auth-fields').classList.toggle('hidden', this.value !== 'sql');
         });
 
-        btnSave.addEventListener('click', async () => {
+        $('#btn-save-server').addEventListener('click', async () => {
             const sc = {
                 name: $('#srv-name').value.trim(),
                 host: $('#srv-host').value.trim(),
@@ -560,8 +574,8 @@
             };
             if (!sc.name && !sc.host) { showModalError('Name oder Host ist erforderlich.'); return; }
             if (!sc.name) sc.name = sc.host;
-            btnSave.disabled = true;
-            btnSave.textContent = 'Verbinde...';
+            const btn = $('#btn-save-server');
+            btn.disabled = true; btn.textContent = 'Verbinde...';
             try {
                 const r = await fetch('/api/server/add', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sc) });
                 const d = await r.json();
@@ -570,13 +584,12 @@
                 showToast('Server "' + sc.name + '" verbunden!');
                 fetchData();
             } catch (e) { showModalError(e.message); }
-            finally { btnSave.disabled = false; btnSave.textContent = 'Verbinden'; }
+            finally { btn.disabled = false; btn.textContent = 'Verbinden'; }
         });
 
-        btnRemove.addEventListener('click', async () => {
+        $('#btn-remove-server').addEventListener('click', async () => {
             const name = $('#srv-name').value.trim() || $('#server-select').value;
-            if (!name) return;
-            if (!confirm('Server "' + name + '" wirklich entfernen?')) return;
+            if (!name || !confirm('Server "' + name + '" wirklich entfernen?')) return;
             try {
                 const r = await fetch('/api/server/remove?name=' + encodeURIComponent(name));
                 const d = await r.json();
@@ -588,7 +601,7 @@
         });
     }
 
-    function clearModalFields() {
+    function clearModal() {
         $('#srv-name').value = '';
         $('#srv-host').value = '';
         $('#srv-port').value = '1433';
@@ -618,12 +631,10 @@
         if (!entry) return;
         $('#ts-title').textContent = entry.title;
         $('#ts-problem').textContent = entry.problem;
-        const causesUl = $('#ts-causes');
-        causesUl.innerHTML = '';
-        (entry.causes || []).forEach(c => { const li = document.createElement('li'); li.textContent = c; causesUl.appendChild(li); });
-        const solOl = $('#ts-solutions');
-        solOl.innerHTML = '';
-        (entry.solutions || []).forEach(s => { const li = document.createElement('li'); li.textContent = s; solOl.appendChild(li); });
+        const ul = $('#ts-causes'); ul.innerHTML = '';
+        (entry.causes || []).forEach(c => { const li = document.createElement('li'); li.textContent = c; ul.appendChild(li); });
+        const ol = $('#ts-solutions'); ol.innerHTML = '';
+        (entry.solutions || []).forEach(s => { const li = document.createElement('li'); li.textContent = s; ol.appendChild(li); });
         const panel = $('#ts-panel');
         panel.classList.remove('hidden');
         panel.offsetHeight;
@@ -642,18 +653,12 @@
         toast.textContent = msg;
         toast.classList.remove('hidden');
         toast.classList.add('visible');
-        setTimeout(() => {
-            toast.classList.remove('visible');
-            setTimeout(() => toast.classList.add('hidden'), 200);
-        }, 2000);
+        setTimeout(() => { toast.classList.remove('visible'); setTimeout(() => toast.classList.add('hidden'), 200); }, 2000);
     }
 
     // ── Helpers ────────────────────────────────────────────────
-    function td(val) { return '<td>' + escHtml(val) + '</td>'; }
-    function escHtml(v) {
-        if (v == null) return '';
-        return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    }
+    function td(val) { return '<td>' + esc(val) + '</td>'; }
+    function esc(v) { if (v == null) return ''; return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
     function fmtNum(v) { if (v == null) return '0'; return Number(v).toLocaleString('de-DE'); }
     function fmtFloat(v) { if (v == null) return '0,0'; return Number(v).toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 }); }
     function getStatusClass(status) {

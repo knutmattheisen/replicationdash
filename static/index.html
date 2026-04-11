@@ -14,9 +14,9 @@
             <div class="logo">
                 <span class="logo-icon">🔄</span>
                 <span class="logo-text">MergeDash</span>
-                <span class="logo-version">v1.0</span>
+                <span class="logo-version">v0.1</span>
             </div>
-            <div id="health-indicator" class="health-ampel" title="">
+            <div id="health-indicator" class="health-ampel">
                 <span class="health-dot"></span>
                 <span class="health-text">—</span>
                 <div id="health-tooltip" class="health-tooltip"></div>
@@ -37,93 +37,95 @@
                 <select id="server-select">
                     <option value="">— Kein Server —</option>
                 </select>
-                <button id="btn-add-server" class="btn btn-primary" title="Server hinzufügen">+ Add Server</button>
+                <button id="btn-add-server" class="btn btn-primary">+ Add Server</button>
             </div>
             <span id="timestamp" class="timestamp"></span>
         </div>
     </header>
 
-    <!-- Tab navigation -->
-    <nav id="tab-nav">
-        <button class="tab-btn active" data-tab="sessions">
-            Sessions <span id="badge-sessions" class="badge">0</span>
-        </button>
-        <button class="tab-btn" data-tab="conflicts">
-            Konflikte <span id="badge-conflicts" class="badge">0</span>
-        </button>
-        <button class="tab-btn" data-tab="blocking">
-            Blocking <span id="badge-blocking" class="badge">0</span>
-        </button>
-    </nav>
+    <!-- ═══ STATUS CARDS per Publication/Subscriber ═══ -->
+    <section id="status-cards" class="status-cards-section">
+        <div id="cards-container" class="cards-container"></div>
+    </section>
 
-    <!-- Tab content -->
-    <main id="main-content">
-        <div id="tab-sessions" class="tab-panel active">
+    <!-- ═══ DETAIL SECTIONS (always visible, collapsible) ═══ -->
+    <section class="detail-section">
+        <div class="section-header" data-toggle="sessions-body">
+            <h2>Sessions <span id="badge-sessions" class="badge">0</span></h2>
+            <span class="toggle-arrow">▼</span>
+        </div>
+        <div id="sessions-body" class="section-body">
             <div class="table-container">
                 <table id="table-sessions" class="data-table">
-                    <thead>
-                        <tr>
-                            <th data-col="publication_name" data-sortable>Publication</th>
-                            <th data-col="subscriber" data-sortable>Subscriber</th>
-                            <th data-col="run_status_text" data-sortable>Status</th>
-                            <th data-col="duration_seconds" data-sortable data-type="number">Dauer (s)</th>
-                            <th data-col="delivery_rate" data-sortable data-type="number">Delivery Rate</th>
-                            <th data-col="upload_inserts" data-sortable data-type="number">Up ↑ Ins</th>
-                            <th data-col="upload_updates" data-sortable data-type="number">Up ↑ Upd</th>
-                            <th data-col="upload_deletes" data-sortable data-type="number">Up ↑ Del</th>
-                            <th data-col="download_inserts" data-sortable data-type="number">Down ↓ Ins</th>
-                            <th data-col="download_updates" data-sortable data-type="number">Down ↓ Upd</th>
-                            <th data-col="download_deletes" data-sortable data-type="number">Down ↓ Del</th>
-                            <th data-col="error_count" data-sortable data-type="number">Errors</th>
-                            <th data-col="start_time" data-sortable>Start</th>
-                            <th data-col="last_message">Last Message</th>
-                        </tr>
-                    </thead>
+                    <thead><tr>
+                        <th data-col="publication_name" data-sortable>Publication</th>
+                        <th data-col="subscriber" data-sortable>Subscriber</th>
+                        <th data-col="run_status_text" data-sortable>Status</th>
+                        <th data-col="duration_seconds" data-sortable data-type="number">Dauer (s)</th>
+                        <th data-col="delivery_rate" data-sortable data-type="number">Delivery Rate</th>
+                        <th data-col="upload_inserts" data-sortable data-type="number">Up ↑ Ins</th>
+                        <th data-col="upload_updates" data-sortable data-type="number">Up ↑ Upd</th>
+                        <th data-col="upload_deletes" data-sortable data-type="number">Up ↑ Del</th>
+                        <th data-col="download_inserts" data-sortable data-type="number">Down ↓ Ins</th>
+                        <th data-col="download_updates" data-sortable data-type="number">Down ↓ Upd</th>
+                        <th data-col="download_deletes" data-sortable data-type="number">Down ↓ Del</th>
+                        <th data-col="error_count" data-sortable data-type="number">Errors</th>
+                        <th data-col="start_time" data-sortable>Start</th>
+                        <th data-col="last_message">Last Message</th>
+                    </tr></thead>
                     <tbody></tbody>
                 </table>
             </div>
         </div>
+    </section>
 
-        <div id="tab-conflicts" class="tab-panel">
+    <section class="detail-section">
+        <div class="section-header" data-toggle="conflicts-body">
+            <h2>Konflikte <span id="badge-conflicts" class="badge">0</span></h2>
+            <span class="toggle-arrow">▼</span>
+        </div>
+        <div id="conflicts-body" class="section-body">
             <div class="table-container">
                 <table id="table-conflicts" class="data-table">
-                    <thead>
-                        <tr>
-                            <th data-col="conflict_table" data-sortable>Conflict Table</th>
-                            <th data-col="origin_datasource" data-sortable>Origin</th>
-                            <th data-col="conflict_type_text" data-sortable>Typ</th>
-                            <th data-col="reason_text" data-sortable>Reason</th>
-                            <th data-col="create_time" data-sortable>Zeitpunkt</th>
-                        </tr>
-                    </thead>
+                    <thead><tr>
+                        <th data-col="conflict_table" data-sortable>Conflict Table</th>
+                        <th data-col="origin_datasource" data-sortable>Origin</th>
+                        <th data-col="conflict_type_text" data-sortable>Typ</th>
+                        <th data-col="reason_text" data-sortable>Reason</th>
+                        <th data-col="create_time" data-sortable>Zeitpunkt</th>
+                    </tr></thead>
                     <tbody></tbody>
                 </table>
             </div>
         </div>
+    </section>
 
-        <div id="tab-blocking" class="tab-panel">
+    <section class="detail-section">
+        <div class="section-header" data-toggle="blocking-body">
+            <h2>Blocking <span id="badge-blocking" class="badge">0</span></h2>
+            <span class="toggle-arrow">▼</span>
+        </div>
+        <div id="blocking-body" class="section-body">
             <div class="table-container">
                 <table id="table-blocking" class="data-table">
-                    <thead>
-                        <tr>
-                            <th data-col="blocked_spid" data-sortable data-type="number">Blocked SPID</th>
-                            <th data-col="blocking_spid" data-sortable data-type="number">Blocker SPID</th>
-                            <th data-col="wait_type" data-sortable>Wait Type</th>
-                            <th data-col="wait_time_ms" data-sortable data-type="number">Wait (ms)</th>
-                            <th data-col="blocked_program" data-sortable>Blocked Program</th>
-                            <th data-col="blocker_program" data-sortable>Blocker Program</th>
-                            <th data-col="blocker_host" data-sortable>Blocker Host</th>
-                            <th data-col="blocker_login" data-sortable>Blocker Login</th>
-                            <th data-col="blocked_sql_text">Blocked SQL</th>
-                            <th data-col="blocker_sql_text">Blocker SQL</th>
-                            <th data-col="replication_related" data-sortable data-type="number">Repl?</th>
-                        </tr>
-                    </thead>
+                    <thead><tr>
+                        <th data-col="blocked_spid" data-sortable data-type="number">Blocked SPID</th>
+                        <th data-col="blocking_spid" data-sortable data-type="number">Blocker SPID</th>
+                        <th data-col="wait_type" data-sortable>Wait Type</th>
+                        <th data-col="wait_time_ms" data-sortable data-type="number">Wait (ms)</th>
+                        <th data-col="blocked_program" data-sortable>Blocked Program</th>
+                        <th data-col="blocker_program" data-sortable>Blocker Program</th>
+                        <th data-col="blocker_host" data-sortable>Blocker Host</th>
+                        <th data-col="blocker_login" data-sortable>Blocker Login</th>
+                        <th data-col="blocked_sql_text">Blocked SQL</th>
+                        <th data-col="blocker_sql_text">Blocker SQL</th>
+                        <th data-col="replication_related" data-sortable data-type="number">Repl?</th>
+                    </tr></thead>
                     <tbody></tbody>
                 </table>
             </div>
         </div>
-    </main>
+    </section>
 
     <!-- Add Server Modal -->
     <div id="modal-overlay" class="modal-overlay hidden">
@@ -142,14 +144,8 @@
                     <input type="text" id="srv-host" placeholder="server.domain.local">
                 </div>
                 <div class="form-row two-col">
-                    <div>
-                        <label>Port</label>
-                        <input type="number" id="srv-port" value="1433">
-                    </div>
-                    <div>
-                        <label>Instance</label>
-                        <input type="text" id="srv-instance" placeholder="(leer = default)">
-                    </div>
+                    <div><label>Port</label><input type="number" id="srv-port" value="1433"></div>
+                    <div><label>Instance</label><input type="text" id="srv-instance" placeholder="(leer = default)"></div>
                 </div>
                 <div class="form-row">
                     <label>Authentifizierung</label>
@@ -160,24 +156,12 @@
                     </select>
                 </div>
                 <div id="sql-auth-fields" class="hidden">
-                    <div class="form-row">
-                        <label>Username</label>
-                        <input type="text" id="srv-user" placeholder="sa">
-                    </div>
-                    <div class="form-row">
-                        <label>Password</label>
-                        <input type="password" id="srv-password">
-                    </div>
+                    <div class="form-row"><label>Username</label><input type="text" id="srv-user" placeholder="sa"></div>
+                    <div class="form-row"><label>Password</label><input type="password" id="srv-password"></div>
                 </div>
                 <div class="form-row two-col">
-                    <div>
-                        <label>Distribution DB</label>
-                        <input type="text" id="srv-distdb" value="distribution">
-                    </div>
-                    <div>
-                        <label>Publication DB</label>
-                        <input type="text" id="srv-pubdb" placeholder="MyDatabase">
-                    </div>
+                    <div><label>Distribution DB</label><input type="text" id="srv-distdb" value="distribution"></div>
+                    <div><label>Publication DB</label><input type="text" id="srv-pubdb" placeholder="MyDatabase"></div>
                 </div>
                 <div id="modal-error" class="modal-error hidden"></div>
             </div>
@@ -195,31 +179,22 @@
             <button class="ts-close" id="ts-close">&times;</button>
         </div>
         <div class="ts-panel-body">
-            <div class="ts-section">
-                <h4>Problem</h4>
-                <p id="ts-problem"></p>
-            </div>
-            <div class="ts-section">
-                <h4>Mögliche Ursachen</h4>
-                <ul id="ts-causes"></ul>
-            </div>
-            <div class="ts-section">
-                <h4>Lösungsansätze</h4>
-                <ol id="ts-solutions"></ol>
-            </div>
+            <div class="ts-section"><h4>Problem</h4><p id="ts-problem"></p></div>
+            <div class="ts-section"><h4>Mögliche Ursachen</h4><ul id="ts-causes"></ul></div>
+            <div class="ts-section"><h4>Lösungsansätze</h4><ol id="ts-solutions"></ol></div>
         </div>
     </div>
 
     <!-- Toast -->
     <div id="toast" class="toast hidden"></div>
 
-    <!-- No servers message -->
+    <!-- No servers -->
     <div id="no-servers-msg" class="no-servers hidden">
         <div class="no-servers-inner">
             <span class="no-servers-icon">🔄</span>
             <h2>Willkommen bei MergeDash</h2>
             <p>Klicke auf <strong>+ Add Server</strong> um deinen ersten SQL Server zu verbinden.</p>
-            <p class="hint">Tipp: Wähle <em>Mock (Demo)</em> als Authentifizierung, um MergeDash mit simulierten Daten zu testen.</p>
+            <p class="hint">Tipp: Wähle <em>Mock (Demo)</em> als Authentifizierung für simulierte Testdaten.</p>
         </div>
     </div>
 

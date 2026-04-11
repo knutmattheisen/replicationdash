@@ -26,6 +26,7 @@ jobs:
           GOOS: windows
           GOARCH: amd64
         run: |
+          rm -f go.sum
           go mod tidy
           go build -ldflags="-s -w -H windowsgui" -o mergedash.exe .
 

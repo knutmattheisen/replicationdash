@@ -28,10 +28,10 @@ jobs:
         run: |
           rm -f go.sum
           go mod tidy
-          go build -ldflags="-s -w -H windowsgui" -o mergedash.exe .
+          go build -ldflags="-s -w -H windowsgui" -o replicationdash.exe .
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: mergedash.exe
+          files: replicationdash.exe
           generate_release_notes: true

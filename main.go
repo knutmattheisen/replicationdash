@@ -1111,7 +1111,7 @@ func main() {
 	mux.Handle("/", http.FileServer(http.FS(staticFS)))
 
 	addr := fmt.Sprintf(":%d", globalConfig.ListenPort)
-	log.Printf("MergeDash v1.0 → http://localhost%s", addr)
+	log.Printf("MergeDash v0.1 → http://localhost%s", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatal(err)
 	}

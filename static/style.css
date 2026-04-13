@@ -242,10 +242,32 @@ select { cursor: pointer; }
 
 .topology-pipeline {
     display: flex;
-    align-items: center;
     justify-content: center;
+}
+
+.topo-star {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
     gap: 0;
-    min-height: 90px;
+}
+
+.topo-star-hub {
+    margin-bottom: 0;
+}
+
+.topo-star-spokes {
+    display: flex;
+    gap: 32px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.topo-spoke {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
 }
 
 .topo-node {
@@ -259,85 +281,60 @@ select { cursor: pointer; }
     min-width: 140px;
     text-align: center;
     position: relative;
-    transition: border-color 0.2s;
 }
 
 .topo-node[data-status="green"]  { border-color: var(--accent-green); }
 .topo-node[data-status="yellow"] { border-color: var(--accent-yellow); }
 .topo-node[data-status="red"]    { border-color: var(--accent-red); }
 
-.topo-node-icon {
-    font-size: 24px;
-    margin-bottom: 4px;
-}
-
-.topo-node-name {
-    font-size: 12px;
-    font-weight: 700;
-    color: var(--text-primary);
-    margin-bottom: 2px;
-}
-
-.topo-node-role {
-    font-size: 10px;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
-}
+.topo-node-icon { font-size: 24px; margin-bottom: 4px; }
+.topo-node-name { font-size: 12px; font-weight: 700; margin-bottom: 2px; }
+.topo-node-role { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.3px; }
 
 .topo-node-status-dot {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    position: absolute;
-    top: 8px; right: 8px;
+    width: 8px; height: 8px; border-radius: 50%;
+    position: absolute; top: 8px; right: 8px;
 }
 .topo-node-status-dot.green  { background: var(--accent-green); box-shadow: 0 0 6px var(--accent-green); }
 .topo-node-status-dot.yellow { background: var(--accent-yellow); box-shadow: 0 0 6px var(--accent-yellow); }
 .topo-node-status-dot.red    { background: var(--accent-red); box-shadow: 0 0 6px var(--accent-red); }
 
-/* Bidirectional arrows between nodes */
-.topo-arrows {
+/* Vertical bidirectional arrows */
+.topo-arrows-vertical {
+    display: flex;
+    gap: 12px;
+    padding: 6px 0;
+    justify-content: center;
+}
+
+.topo-arrow-v {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 4px;
-    padding: 0 8px;
-    min-width: 60px;
-}
-
-.topo-arrow {
-    display: flex;
-    align-items: center;
     gap: 2px;
-    font-size: 10px;
-    white-space: nowrap;
 }
 
-.topo-arrow-line {
-    width: 30px;
-    height: 2px;
+.topo-arrow-line-v {
+    width: 2px;
+    height: 20px;
     border-radius: 1px;
     background: var(--border-light);
-}
-
-.topo-arrow-head {
-    font-size: 10px;
-    color: var(--text-muted);
 }
 
 .topo-arrow-label {
     font-size: 9px;
     color: var(--text-muted);
+    white-space: nowrap;
 }
 
-.topo-arrow[data-status="ok"] .topo-arrow-line { background: var(--accent-green); }
-.topo-arrow[data-status="ok"] .topo-arrow-head { color: var(--accent-green); }
-.topo-arrow[data-status="running"] .topo-arrow-line { background: var(--accent-blue); }
-.topo-arrow[data-status="running"] .topo-arrow-head { color: var(--accent-blue); }
-.topo-arrow[data-status="error"] .topo-arrow-line { background: var(--accent-red); }
-.topo-arrow[data-status="error"] .topo-arrow-head { color: var(--accent-red); }
-.topo-arrow[data-status="warn"] .topo-arrow-line { background: var(--accent-yellow); }
-.topo-arrow[data-status="warn"] .topo-arrow-head { color: var(--accent-yellow); }
+.topo-arrow-v[data-status="ok"] .topo-arrow-line-v { background: var(--accent-green); }
+.topo-arrow-v[data-status="ok"] .topo-arrow-label { color: var(--accent-green); }
+.topo-arrow-v[data-status="running"] .topo-arrow-line-v { background: var(--accent-blue); }
+.topo-arrow-v[data-status="running"] .topo-arrow-label { color: var(--accent-blue); }
+.topo-arrow-v[data-status="error"] .topo-arrow-line-v { background: var(--accent-red); }
+.topo-arrow-v[data-status="error"] .topo-arrow-label { color: var(--accent-red); }
+.topo-arrow-v[data-status="warn"] .topo-arrow-line-v { background: var(--accent-yellow); }
+.topo-arrow-v[data-status="warn"] .topo-arrow-label { color: var(--accent-yellow); }
 
 /* ═══════════════════════════════════════════════════════════════
    STATUS CARDS

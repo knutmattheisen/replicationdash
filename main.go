@@ -28,64 +28,53 @@ var staticFiles embed.FS
 // ───────────────────────────────────────────────────────────────
 
 const queryTopology = `
-SELECT
+SELECT DISTINCT
     CAST(SERVERPROPERTY('ServerName') AS NVARCHAR(256)) AS server_name,
-    p.publication                     AS publication_name,
-    p.publisher_db                    AS publisher_db,
-    ISNULL(sub.subscriber_server, '') AS subscriber_server,
-    ISNULL(sub.db_name, '')           AS subscriber_db,
-    CASE
-        WHEN sub.subscription_type = 0 THEN 'Push'
-        WHEN sub.subscription_type = 1 THEN 'Pull'
-        ELSE 'Unknown'
-    END                               AS subscription_type
-FROM dbo.MSpublications p
-LEFT JOIN dbo.MSsubscriptions sub
-    ON p.publisher_db = sub.publisher_db
-   AND p.publication = sub.publication
-ORDER BY p.publication, sub.subscriber_server;
+    a.publication                     AS publication_name,
+    a.publisher_db                    AS publisher_db,
+    a.subscriber_name                 AS subscriber_server,
+    a.subscriber_db                   AS subscriber_db
+FROM MSmerge_agents a
+WHERE a.subscriber_name IS NOT NULL
+  AND a.subscriber_name <> ''
+ORDER BY a.publication, a.subscriber_name;
 `
 
 const queryLatencySessions = `
 SELECT
-    p.name                          AS publication_name,
-    ISNULL(sub.subscriber_server, '')  AS subscriber,
-    ISNULL(sub.db_name, '')         AS subscriber_db,
+    a.publication                    AS publication_name,
+    a.subscriber_name                AS subscriber,
+    a.subscriber_db                  AS subscriber_db,
     s.session_id,
     s.agent_id,
     s.start_time,
-    ISNULL(s.end_time, GETDATE())   AS end_time,
-    s.duration                      AS duration_seconds,
+    DATEADD(SECOND, s.duration, s.start_time) AS end_time,
+    s.duration                       AS duration_seconds,
     s.delivery_rate,
     s.upload_inserts,
     s.upload_updates,
     s.upload_deletes,
+    s.upload_conflicts,
     s.download_inserts,
     s.download_updates,
     s.download_deletes,
+    s.download_conflicts,
     s.schema_changes,
-    s.errors_count                  AS error_count,
-    s.run_status,
-    CASE s.run_status
+    (ISNULL(s.upload_conflicts, 0) + ISNULL(s.download_conflicts, 0)) AS error_count,
+    s.runstatus                      AS run_status,
+    CASE s.runstatus
         WHEN 1 THEN 'Started'
         WHEN 2 THEN 'Succeeded'
         WHEN 3 THEN 'InProgress'
         WHEN 4 THEN 'Idle'
         WHEN 5 THEN 'Retry'
         WHEN 6 THEN 'Failed'
-        ELSE 'Unknown(' + CAST(s.run_status AS VARCHAR) + ')'
-    END                             AS run_status_text,
-    ISNULL(h.comments, '')          AS last_message
+        ELSE 'Unknown(' + CAST(s.runstatus AS VARCHAR) + ')'
+    END                              AS run_status_text,
+    ISNULL(h.comments, '')           AS last_message
 FROM MSmerge_sessions s
 INNER JOIN MSmerge_agents a
     ON s.agent_id = a.id
-INNER JOIN dbo.MSpublications p
-    ON a.publisher_db = p.publisher_db
-   AND a.publication = p.publication
-LEFT JOIN dbo.MSsubscriptions sub
-    ON a.publisher_db = sub.publisher_db
-   AND a.publication = sub.publication
-   AND sub.subscription_type = 0
 OUTER APPLY (
     SELECT TOP 1 comments
     FROM MSmerge_history mh

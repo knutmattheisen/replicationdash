@@ -82,6 +82,9 @@ OUTER APPLY (
     ORDER BY mh.time DESC
 ) h
 WHERE s.start_time >= DATEADD(MINUTE, -60, GETDATE())
+   OR s.runstatus = 3
+   OR s.runstatus = 1
+   OR DATEADD(SECOND, s.duration, s.start_time) >= DATEADD(MINUTE, -60, GETDATE())
 ORDER BY s.start_time DESC;
 `
 
@@ -1616,7 +1619,7 @@ func main() {
 	mux.Handle("/", http.FileServer(http.FS(staticFS)))
 
 	addr := fmt.Sprintf(":%d", globalConfig.ListenPort)
-	log.Printf("ReplicationDash v0.2.0 → http://localhost%s", addr)
+	log.Printf("ReplicationDash v0.2.4 → http://localhost%s", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatal(err)
 	}

@@ -17,7 +17,6 @@
                     <span class="logo-text">ReplicationDash</span>
                     <span class="logo-sub">by DBo</span>
                 </div>
-                <span class="logo-version">v0.2.0</span>
             </div>
             <div id="health-indicator" class="health-ampel">
                 <span class="health-dot"></span>
@@ -63,28 +62,47 @@
 
     <!-- ═══ DETAIL SECTIONS (always visible, collapsible) ═══ -->
     <section class="detail-section">
-        <div class="section-header" data-toggle="sessions-body">
-            <h2>Sessions <span id="badge-sessions" class="badge">0</span></h2>
+        <div class="section-header" data-toggle="agents-body">
+            <h2>Agent Status <span id="badge-sessions" class="badge">0</span></h2>
             <span class="toggle-arrow">▼</span>
         </div>
-        <div id="sessions-body" class="section-body">
+        <div id="agents-body" class="section-body">
             <div class="table-container">
                 <table id="table-sessions" class="data-table">
                     <thead><tr>
                         <th data-col="publication_name" data-sortable>Publication</th>
                         <th data-col="subscriber" data-sortable>Subscriber</th>
                         <th data-col="run_status_text" data-sortable>Status</th>
-                        <th data-col="duration_seconds" data-sortable data-type="number">Dauer (s)</th>
                         <th data-col="delivery_rate" data-sortable data-type="number">Delivery Rate</th>
                         <th data-col="upload_inserts" data-sortable data-type="number">Up ↑ Ins</th>
                         <th data-col="upload_updates" data-sortable data-type="number">Up ↑ Upd</th>
                         <th data-col="upload_deletes" data-sortable data-type="number">Up ↑ Del</th>
+                        <th data-col="upload_conflicts" data-sortable data-type="number">Up Conflicts</th>
                         <th data-col="download_inserts" data-sortable data-type="number">Down ↓ Ins</th>
                         <th data-col="download_updates" data-sortable data-type="number">Down ↓ Upd</th>
                         <th data-col="download_deletes" data-sortable data-type="number">Down ↓ Del</th>
-                        <th data-col="error_count" data-sortable data-type="number">Errors</th>
-                        <th data-col="start_time" data-sortable>Start</th>
-                        <th data-col="last_message">Last Message</th>
+                        <th data-col="download_conflicts" data-sortable data-type="number">Down Conflicts</th>
+                    </tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <section class="detail-section">
+        <div class="section-header" data-toggle="history-body">
+            <h2>Letzte Aktivität (60 Min) <span id="badge-history" class="badge">0</span> <span id="badge-errors" class="badge hidden">0</span></h2>
+            <span class="toggle-arrow">▼</span>
+        </div>
+        <div id="history-body" class="section-body">
+            <div class="table-container">
+                <table id="table-history" class="data-table">
+                    <thead><tr>
+                        <th data-col="event_time" data-sortable>Zeitpunkt</th>
+                        <th data-col="publication_name" data-sortable>Publication</th>
+                        <th data-col="subscriber" data-sortable>Subscriber</th>
+                        <th data-col="message">Meldung</th>
+                        <th data-col="error_text">Fehler</th>
                     </tr></thead>
                     <tbody></tbody>
                 </table>

@@ -198,6 +198,32 @@
         </div>
     </div>
 
+    <!-- Card Detail Slide-in Panel -->
+    <div id="card-detail-panel" class="card-detail-panel hidden">
+        <div class="cd-header">
+            <div class="cd-header-info">
+                <h3 id="cd-title"></h3>
+                <span id="cd-badge" class="card-status-badge"></span>
+            </div>
+            <button class="ts-close" id="cd-close">&times;</button>
+        </div>
+        <div id="cd-recommendation" class="cd-recommendation hidden"></div>
+        <div class="cd-body">
+            <div class="cd-section">
+                <h4>Sessions <span id="cd-session-count" class="badge">0</span></h4>
+                <div id="cd-sessions" class="cd-table-wrap"></div>
+            </div>
+            <div class="cd-section">
+                <h4>Konflikte <span id="cd-conflict-count" class="badge">0</span></h4>
+                <div id="cd-conflicts" class="cd-table-wrap"></div>
+            </div>
+            <div class="cd-section">
+                <h4>Blocking <span id="cd-blocking-count" class="badge">0</span></h4>
+                <div id="cd-blocking" class="cd-table-wrap"></div>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast -->
     <div id="toast" class="toast hidden"></div>
 

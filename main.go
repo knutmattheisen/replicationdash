@@ -918,25 +918,36 @@ func buildCards(sessions []map[string]any, conflicts []map[string]any, blocking 
 	for key, g := range groups {
 		confCount := conflictCounts[g.sub]
 
-		// Per-card level
+		// Per-card level with proper conflict thresholds
+		// Conflicts: <6 = normal (green), 6-20 = yellow, 20+ = red
 		level := "green"
 		if g.lastStatus == 6 || g.totalErrors > 0 {
 			level = "red"
-		} else if hasReplBlocking {
-			// only red if this specific sub might be affected
-			level = "red"
-		} else if g.maxDur > 300 || g.lastStatus == 5 {
+		} else if g.lastStatus == 5 {
 			level = "yellow"
-		} else if confCount > 0 {
+		} else if g.maxDur > 300 {
 			level = "yellow"
 		}
 
-		// If no sessions at all for this card
+		// Conflict thresholds (independent of other status)
+		if confCount >= 20 {
+			if level != "red" {
+				level = "red"
+			}
+		} else if confCount >= 6 {
+			if level == "green" {
+				level = "yellow"
+			}
+		}
+		// <6 conflicts = normal, stays green
+
+		// No sessions at all
 		if len(g.sessions) == 0 {
 			level = "yellow"
 		}
 
-		statusText, statusClass := cardStatus(g.lastStatus, g.totalErrors, g.maxDur, len(g.sessions) == 0)
+		// Badge must match the card level
+		statusText, statusClass := cardStatusWithLevel(g.lastStatus, g.totalErrors, g.maxDur, confCount, len(g.sessions) == 0, level)
 
 		// Upload/Download status
 		upStatus := "ok"
@@ -984,7 +995,7 @@ func buildCards(sessions []map[string]any, conflicts []map[string]any, blocking 
 	return cards
 }
 
-func cardStatus(lastStatus int, errors int, maxDur int, noSessions bool) (string, string) {
+func cardStatusWithLevel(lastStatus int, errors int, maxDur int, confCount int, noSessions bool, level string) (string, string) {
 	if noSessions {
 		return "KEINE DATEN", "s-warn"
 	}
@@ -996,6 +1007,12 @@ func cardStatus(lastStatus int, errors int, maxDur int, noSessions bool) (string
 	}
 	if lastStatus == 5 {
 		return "RETRY", "s-warn"
+	}
+	if confCount >= 20 {
+		return "KONFLIKTE", "s-crit"
+	}
+	if confCount >= 6 {
+		return "KONFLIKTE", "s-warn"
 	}
 	if maxDur > 300 {
 		return "LANGSAM", "s-warn"
@@ -1013,13 +1030,29 @@ func cardStatus(lastStatus int, errors int, maxDur int, noSessions bool) (string
 // Health Assessment
 // ───────────────────────────────────────────────────────────────
 
-func assessHealth(sessions []map[string]any, conflicts []map[string]any, blocking []map[string]any, failed int) HealthStatus {
+func assessHealth(cards []PubSubCard, sessions []map[string]any, conflicts []map[string]any, blocking []map[string]any) HealthStatus {
 	level := "green"
 	var details []string
 
-	if failed > 0 {
-		level = "red"
-		details = append(details, fmt.Sprintf("%d fehlgeschlagene Session(s) in den letzten 60 Minuten", failed))
+	// Global status = worst card status
+	for _, c := range cards {
+		if c.Level == "red" {
+			level = "red"
+		} else if c.Level == "yellow" && level != "red" {
+			level = "yellow"
+		}
+	}
+
+	// Collect detail reasons
+	for _, c := range cards {
+		if c.Level == "red" {
+			details = append(details, fmt.Sprintf("%s → %s: %s", c.Publication, c.Subscriber, c.StatusText))
+		}
+	}
+	for _, c := range cards {
+		if c.Level == "yellow" {
+			details = append(details, fmt.Sprintf("%s → %s: %s", c.Publication, c.Subscriber, c.StatusText))
+		}
 	}
 
 	replBlocked := 0
@@ -1033,25 +1066,7 @@ func assessHealth(sessions []map[string]any, conflicts []map[string]any, blockin
 		details = append(details, fmt.Sprintf("%d Blockade(n) betreffen Replikations-Agenten", replBlocked))
 	}
 
-	for _, s := range sessions {
-		d := toInt(s["duration_seconds"])
-		if d > 300 {
-			if level == "green" {
-				level = "yellow"
-			}
-			details = append(details, fmt.Sprintf("Hohe Latenz: %d Sek. für %v → %v", d, s["publication_name"], s["subscriber"]))
-			break
-		}
-	}
-
-	if len(conflicts) > 5 {
-		if level == "green" {
-			level = "yellow"
-		}
-		details = append(details, fmt.Sprintf("%d Konflikte erkannt", len(conflicts)))
-	}
-
-	if len(sessions) == 0 {
+	if len(sessions) == 0 && len(cards) == 0 {
 		if level == "green" {
 			level = "yellow"
 		}
@@ -1059,7 +1074,7 @@ func assessHealth(sessions []map[string]any, conflicts []map[string]any, blockin
 	}
 
 	if len(details) == 0 {
-		details = append(details, "Alle Merge-Sessions laufen normal. Keine Blockaden oder Konflikte.")
+		details = append(details, "Alle Merge-Sessions laufen normal. Keine Blockaden oder kritische Konflikte.")
 	}
 
 	summaryMap := map[string]string{
@@ -1125,9 +1140,9 @@ func fetchRealData(st *ServerState) (*DashboardData, error) {
 		}
 	}
 
-	health := assessHealth(sessions, conflicts, blocking, failedCount)
-	rootCause := analyzeRootCause(sessions, conflicts, blocking)
 	cards := buildCards(sessions, conflicts, blocking, st.topology)
+	rootCause := analyzeRootCause(sessions, conflicts, blocking)
+	health := assessHealth(cards, sessions, conflicts, blocking)
 
 	topo := st.topology
 	if topo == nil {
@@ -1345,9 +1360,9 @@ func generateMockData(serverName string) *DashboardData {
 		})
 	}
 
-	health := assessHealth(sessions, conflicts, blocking, failedCount)
-	rootCause := analyzeRootCause(sessions, conflicts, blocking)
 	cards := buildCards(sessions, conflicts, blocking, &mockTopology)
+	rootCause := analyzeRootCause(sessions, conflicts, blocking)
+	health := assessHealth(cards, sessions, conflicts, blocking)
 
 	return &DashboardData{
 		Timestamp:        now.Format("2006-01-02 15:04:05"),

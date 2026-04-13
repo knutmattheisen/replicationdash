@@ -1,4 +1,4 @@
-# ReplicationDash v0.2.0 — SQL Server Replication Dashboard
+# ReplicationDash v0.2.3 — SQL Server Replication Dashboard
 
 Portable, zero-install DBA tool for near real-time monitoring of SQL Server Merge Replication.
 Single Windows executable. No Node.js, Python, .NET runtime or installer required.
@@ -11,7 +11,9 @@ by **DBo**
 
 * **Topology visualization** — automatic discovery of Publisher, Distributor and Subscribers with visual pipeline display
 * **Bidirectional arrows** — separate Upload/Download status indicators per connection
-* **Status cards per publication/subscriber** — instant overview with color-coded health (green/yellow/red)
+* **Status cards per publication/subscriber** — instant overview with color-coded health (green/yellow/red), click for deep-dive
+* **Card detail panel** — click any card to see filtered sessions, conflicts, blocking and an automatic action recommendation for that specific connection
+* **Smart conflict thresholds** — under 6 conflicts = normal (green), 6–20 = warning (yellow), 20+ = critical (red)
 * **Root cause classification** — automatic analysis: ⚙️ Systemisch (hardware/network) vs 👤 Nutzungsspezifisch (user error/config) with explanation
 * **Health Ampel** — green/yellow/red with mouseover tooltip explaining current status
 * **Merge Session monitoring** — MSmerge_sessions with duration, delivery rates, upload/download counts, error tracking
@@ -143,6 +145,17 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w -H windowsgui" 
 
 ## Changelog
 
+### v0.2.3
+* **Card detail panel** — click any status card for a slide-in with filtered sessions, conflicts, blocking and automatic action recommendation
+* Smart conflict thresholds: <6 = normal, 6–20 = yellow, 20+ = red
+* Status badge on cards now matches card color level consistently
+
+### v0.2.1
+* Star topology layout (Publisher centered on top, Subscribers below)
+* Card color fix: blocking no longer turns all cards red globally
+* Global health ampel now reflects worst card status
+* Conflict thresholds implemented
+
 ### v0.2.0
 * Renamed from MergeDash to **ReplicationDash by DBo**
 * Topology visualization with automatic discovery
@@ -150,7 +163,6 @@ GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w -H windowsgui" 
 * Status cards computed server-side with fixed topology
 * Root cause classification (Systemisch vs Nutzungsspezifisch)
 * Fixed mock mode with stable topology (no more random card count)
-* Fixed card color bug (blocking no longer turns all cards red)
 * Collapsible detail sections
 * Version number consistent across all files
 

@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════
-   ReplicationDash v0.2.0 — Frontend Application
+   ReplicationDash v0.2.4 — Frontend Application
    Topology pipeline, status cards from backend, root cause
    ═══════════════════════════════════════════════════════════════ */
 
@@ -115,6 +115,7 @@
             renderTopology(data.topology, data.cards);
             renderStatusCards(data.cards);
             renderSessions(data.sessions);
+            renderHistory(data.history);
             renderConflicts(data.conflicts);
             renderBlocking(data.blocking);
         } catch (e) {
@@ -171,14 +172,24 @@
 
     function updateBadges(data) {
         const bS = $('#badge-sessions');
+        const bH = $('#badge-history');
+        const bE = $('#badge-errors');
         const bC = $('#badge-conflicts');
         const bB = $('#badge-blocking');
         bS.textContent = data.session_count || 0;
+        bH.textContent = data.history_count || 0;
         bC.textContent = data.conflict_count || 0;
         bB.textContent = data.blocking_count || 0;
         bS.className = 'badge' + (data.failed_sessions > 0 ? ' crit' : '');
         bC.className = 'badge' + (data.conflict_count > 5 ? ' warn' : data.conflict_count > 0 ? ' warn' : '');
         bB.className = 'badge' + (data.blocking_count > 0 ? ' crit' : '');
+        if (data.error_count > 0) {
+            bE.textContent = data.error_count + ' Fehler';
+            bE.className = 'badge crit';
+            bE.classList.remove('hidden');
+        } else {
+            bE.classList.add('hidden');
+        }
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -381,33 +392,52 @@
     function renderSessions(sessions) {
         const tbody = $('#table-sessions tbody');
         if (!sessions || sessions.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="14" style="text-align:center;color:var(--text-muted);padding:30px;">Keine Sessions</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;color:var(--text-muted);padding:30px;">Keine Agenten</td></tr>';
             return;
         }
         const sorted = applySorting('table-sessions', sessions);
         let html = '';
         sorted.forEach(s => {
             const statusClass = getStatusClass(s.run_status_text);
-            const durClass = (s.duration_seconds > 300) ? 'cell-warn' : '';
-            const errClass = (s.error_count > 0) ? 'cell-crit' : '';
-            const durTrigger = (s.duration_seconds > 300) ? ' data-ts-trigger="latency_high"' : '';
-            const errTrigger = (s.error_count > 0 && s.run_status === 6) ? ' data-ts-trigger="session_error"' : '';
-
             html += '<tr>';
             html += td(s.publication_name);
             html += td(s.subscriber);
             html += '<td class="' + statusClass + '">' + esc(s.run_status_text) + '</td>';
-            html += '<td class="' + durClass + '"' + durTrigger + '>' + fmtNum(s.duration_seconds) + '</td>';
             html += td(fmtFloat(s.delivery_rate));
             html += td(fmtNum(s.upload_inserts));
             html += td(fmtNum(s.upload_updates));
             html += td(fmtNum(s.upload_deletes));
+            html += td(fmtNum(s.upload_conflicts));
             html += td(fmtNum(s.download_inserts));
             html += td(fmtNum(s.download_updates));
             html += td(fmtNum(s.download_deletes));
-            html += '<td class="' + errClass + '"' + errTrigger + '>' + fmtNum(s.error_count) + '</td>';
-            html += td(s.start_time);
-            html += td(s.last_message);
+            html += td(fmtNum(s.download_conflicts));
+            html += '</tr>';
+        });
+        tbody.innerHTML = html;
+        attachCellHandlers(tbody);
+    }
+
+    function renderHistory(history) {
+        const tbody = $('#table-history tbody');
+        if (!history || history.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:30px;">Keine Aktivität in den letzten 60 Minuten</td></tr>';
+            return;
+        }
+        let html = '';
+        history.forEach(h => {
+            const hasError = h.error_id && h.error_id > 0;
+            const rowClass = hasError ? ' style="background:rgba(248,81,73,0.08)"' : '';
+            html += '<tr' + rowClass + '>';
+            html += td(h.event_time);
+            html += td(h.publication_name);
+            html += td(h.subscriber);
+            html += '<td>' + esc(h.message) + '</td>';
+            if (hasError) {
+                html += '<td class="cell-crit">' + esc(h.error_text) + '</td>';
+            } else {
+                html += '<td style="color:var(--text-muted)">—</td>';
+            }
             html += '</tr>';
         });
         tbody.innerHTML = html;
@@ -643,6 +673,8 @@
 
         const card = (currentData.cards || []).find(c => c.publication === pub && c.subscriber === sub);
         const sessions = (currentData.sessions || []).filter(s => s.publication_name === pub && s.subscriber === sub);
+        const history = (currentData.history || []).filter(h => h.publication_name === pub && h.subscriber === sub);
+        const errors = history.filter(h => h.error_id && h.error_id > 0);
         const conflicts = (currentData.conflicts || []).filter(c => c.origin_datasource === sub);
         const blocking = (currentData.blocking || []).filter(b => {
             const prog = (b.blocked_program || '').toLowerCase();
@@ -663,7 +695,7 @@
             recEl.classList.remove('hidden', 'rc-ok', 'rc-warn', 'rc-crit');
             const rcLevel = card.level === 'red' ? 'rc-crit' : 'rc-warn';
             recEl.classList.add(rcLevel);
-            recEl.innerHTML = buildRecommendation(card, sessions, conflicts, blocking);
+            recEl.innerHTML = buildRecommendation(card, sessions, errors, conflicts, blocking);
         } else if (card && card.level === 'green') {
             recEl.classList.remove('hidden', 'rc-warn', 'rc-crit');
             recEl.classList.add('rc-ok');
@@ -673,19 +705,18 @@
             recEl.classList.add('hidden');
         }
 
-        // Sessions table
+        // Sessions (agent status)
         const sessCount = $('#cd-session-count');
         sessCount.textContent = sessions.length;
-        sessCount.className = 'badge' + (sessions.some(s => s.run_status === 6) ? ' crit' : '');
-        renderCardSessions(sessions);
+        renderCardAgentStatus(sessions);
 
-        // Conflicts table
+        // Errors from history
         const confCount = $('#cd-conflict-count');
-        confCount.textContent = conflicts.length;
-        confCount.className = 'badge' + (conflicts.length >= 6 ? ' warn' : '');
-        renderCardConflicts(conflicts);
+        confCount.textContent = errors.length + ' Fehler / ' + conflicts.length + ' Konflikte';
+        confCount.className = 'badge' + (errors.length > 0 ? ' crit' : conflicts.length > 0 ? ' warn' : '');
+        renderCardErrors(errors, conflicts);
 
-        // Blocking table
+        // Blocking
         const blockCount = $('#cd-blocking-count');
         blockCount.textContent = blocking.length;
         blockCount.className = 'badge' + (blocking.length > 0 ? ' crit' : '');
@@ -704,33 +735,33 @@
         setTimeout(() => panel.classList.add('hidden'), 250);
     }
 
-    function buildRecommendation(card, sessions, conflicts, blocking) {
+    function buildRecommendation(card, sessions, errors, conflicts, blocking) {
         let title = '';
         let text = '';
         const rcClass = card.level === 'red' ? 'rc-crit' : 'rc-warn';
 
-        // Failed sessions
-        const failedSessions = sessions.filter(s => s.run_status === 6);
-        if (failedSessions.length > 0) {
-            title = '⚠ ' + failedSessions.length + ' fehlgeschlagene Session(s)';
-            const lastMsg = failedSessions[0].last_message || '';
-            if (lastMsg.toLowerCase().includes('deadlock')) {
+        // Errors from history (real error messages)
+        if (errors.length > 0) {
+            title = '⚠ ' + errors.length + ' Fehler in den letzten 60 Minuten';
+            const lastErr = errors[0];
+            const errText = lastErr.error_text || lastErr.message || '';
+            if (errText.toLowerCase().includes('deadlock')) {
                 text = 'Deadlock während der Synchronisation. Konkurrierende Zugriffe zwischen Applikation und Merge-Agent. Indizes und Zugriffsmuster prüfen.';
-            } else if (lastMsg.toLowerCase().includes('timeout')) {
+            } else if (errText.toLowerCase().includes('timeout')) {
                 text = 'Timeout – Server möglicherweise überlastet oder Netzwerk-Latenz zu hoch. Agent-Profil und QueryTimeout prüfen.';
-            } else if (lastMsg.toLowerCase().includes('connect')) {
-                text = 'Verbindungsfehler zum Subscriber. Netzwerk, DNS und SQL Server-Dienst auf dem Subscriber prüfen.';
+            } else if (errText.toLowerCase().includes('connect') || errText.toLowerCase().includes('verbindung')) {
+                text = 'Verbindungsfehler zum Subscriber. Netzwerk, DNS und SQL Server-Dienst prüfen.';
             } else {
-                text = 'Fehlermeldung: "' + lastMsg.substring(0, 200) + '". SQL Server Agent Job-Verlauf prüfen.';
+                text = 'Letzter Fehler: "' + errText.substring(0, 250) + '"';
             }
             return '<div class="cd-rec-title ' + rcClass + '">' + esc(title) + '</div><div class="cd-rec-text">' + esc(text) + '</div>';
         }
 
-        // Retry
-        const retrySessions = sessions.filter(s => s.run_status === 5);
-        if (retrySessions.length > 0) {
-            title = '⟳ Session im Retry-Modus';
-            text = 'Der Merge-Agent versucht erneut zu synchronisieren. Wenn Retries häufen, Verbose-Logging aktivieren: replmerg.exe -OutputVerboseLevel 2';
+        // Failed agent status
+        const failedAgents = sessions.filter(s => s.run_status === 6);
+        if (failedAgents.length > 0) {
+            title = '⚠ Merge-Agent im Status FAILED';
+            text = 'Der Agent ist fehlgeschlagen. Prüfe die "Letzte Aktivität" Tabelle für Details oder starte den Agent manuell neu.';
             return '<div class="cd-rec-title ' + rcClass + '">' + esc(title) + '</div><div class="cd-rec-text">' + esc(text) + '</div>';
         }
 
@@ -742,9 +773,9 @@
             const login = b.blocker_login || '?';
             title = '🔒 Merge-Agent wird blockiert';
             if (prog.toLowerCase().includes('management studio') || prog.toLowerCase().includes('azdata')) {
-                text = 'Blockiert durch ' + prog + ' auf ' + host + ' (' + login + '). Vermutlich offene Transaktion ohne COMMIT. Kollegen kontaktieren.';
+                text = 'Blockiert durch ' + prog + ' auf ' + host + ' (' + login + '). Vermutlich offene Transaktion ohne COMMIT.';
             } else {
-                text = 'Blockiert durch ' + prog + ' auf ' + host + ' (' + login + '). Wartzeit: ' + Math.round((b.wait_time_ms || 0) / 1000) + 's. SQL-Text der blockierenden Session prüfen.';
+                text = 'Blockiert durch ' + prog + ' auf ' + host + ' (' + login + '). Wartzeit: ' + Math.round((b.wait_time_ms || 0) / 1000) + 's.';
             }
             return '<div class="cd-rec-title ' + rcClass + '">' + esc(title) + '</div><div class="cd-rec-text">' + esc(text) + '</div>';
         }
@@ -752,33 +783,29 @@
         // High conflicts
         if (conflicts.length >= 6) {
             title = '⚡ Erhöhte Konfliktrate: ' + conflicts.length + ' Konflikte';
-            text = 'Mehrere Standorte ändern dieselben Datensätze. Datenhoheit prüfen – wer darf welche Zeilen ändern? Column-Level Tracking erwägen.';
+            text = 'Mehrere Standorte ändern dieselben Datensätze. Datenhoheit prüfen.';
             return '<div class="cd-rec-title ' + rcClass + '">' + esc(title) + '</div><div class="cd-rec-text">' + esc(text) + '</div>';
         }
 
-        // High latency
-        if (card.max_duration > 300) {
-            title = '🐌 Hohe Latenz: ' + formatDuration(card.max_duration);
-            const totalRows = card.total_uploads + card.total_downloads;
-            if (totalRows > 10000) {
-                text = 'Großes Datenvolumen (' + totalRows.toLocaleString('de-DE') + ' Zeilen). Massen-Operationen in Wartungsfenster verlegen oder Agent-Profil optimieren.';
-            } else {
-                text = 'Wenige Daten aber hohe Latenz – deutet auf I/O-Engpass, Netzwerkprobleme oder Server-Überlastung hin.';
-            }
+        // Retry status
+        const retryAgents = sessions.filter(s => s.run_status === 5);
+        if (retryAgents.length > 0) {
+            title = '⟳ Agent im Retry-Modus';
+            text = 'Der Merge-Agent versucht erneut zu synchronisieren. Verbose-Logging aktivieren falls Retries anhalten.';
             return '<div class="cd-rec-title ' + rcClass + '">' + esc(title) + '</div><div class="cd-rec-text">' + esc(text) + '</div>';
         }
 
         return '';
     }
 
-    function renderCardSessions(sessions) {
+    function renderCardAgentStatus(sessions) {
         const wrap = $('#cd-sessions');
         if (sessions.length === 0) {
-            wrap.innerHTML = '<div class="cd-empty">Keine Sessions für diese Verbindung</div>';
+            wrap.innerHTML = '<div class="cd-empty">Kein Agent für diese Verbindung</div>';
             return;
         }
         let html = '<table class="cd-table"><thead><tr>';
-        html += '<th>Status</th><th>Dauer</th><th>Up ↑</th><th>Down ↓</th><th>Errors</th><th>Start</th><th>Message</th>';
+        html += '<th>Status</th><th>Delivery Rate</th><th>Up ↑</th><th>Down ↓</th><th>Up Conflicts</th><th>Down Conflicts</th>';
         html += '</tr></thead><tbody>';
         sessions.forEach(s => {
             const cls = getStatusClass(s.run_status_text);
@@ -786,12 +813,11 @@
             const downs = (s.download_inserts || 0) + (s.download_updates || 0) + (s.download_deletes || 0);
             html += '<tr>';
             html += '<td class="' + cls + '">' + esc(s.run_status_text) + '</td>';
-            html += '<td>' + formatDuration(s.duration_seconds) + '</td>';
+            html += '<td>' + fmtFloat(s.delivery_rate) + '</td>';
             html += '<td>' + fmtNum(ups) + '</td>';
             html += '<td>' + fmtNum(downs) + '</td>';
-            html += '<td' + (s.error_count > 0 ? ' style="color:var(--accent-red);font-weight:600"' : '') + '>' + (s.error_count || 0) + '</td>';
-            html += '<td>' + esc(s.start_time) + '</td>';
-            html += '<td>' + esc(s.last_message) + '</td>';
+            html += '<td>' + fmtNum(s.upload_conflicts) + '</td>';
+            html += '<td>' + fmtNum(s.download_conflicts) + '</td>';
             html += '</tr>';
         });
         html += '</tbody></table>';
@@ -799,24 +825,46 @@
         attachCellHandlers(wrap);
     }
 
-    function renderCardConflicts(conflicts) {
+    function renderCardErrors(errors, conflicts) {
         const wrap = $('#cd-conflicts');
-        if (conflicts.length === 0) {
-            wrap.innerHTML = '<div class="cd-empty">Keine Konflikte für diesen Subscriber</div>';
+        if (errors.length === 0 && conflicts.length === 0) {
+            wrap.innerHTML = '<div class="cd-empty">Keine Fehler oder Konflikte für diesen Subscriber</div>';
             return;
         }
-        let html = '<table class="cd-table"><thead><tr>';
-        html += '<th>Tabelle</th><th>Typ</th><th>Reason</th><th>Zeitpunkt</th>';
-        html += '</tr></thead><tbody>';
-        conflicts.forEach(c => {
-            html += '<tr>';
-            html += '<td>' + esc(c.conflict_table) + '</td>';
-            html += '<td>' + esc(c.conflict_type_text) + '</td>';
-            html += '<td>' + esc(c.reason_text) + '</td>';
-            html += '<td>' + esc(c.create_time) + '</td>';
-            html += '</tr>';
-        });
-        html += '</tbody></table>';
+        let html = '';
+
+        // Errors from history
+        if (errors.length > 0) {
+            html += '<h5 style="color:var(--accent-red);font-size:12px;margin:8px 0 4px;">Fehler (' + errors.length + ')</h5>';
+            html += '<table class="cd-table"><thead><tr>';
+            html += '<th>Zeitpunkt</th><th>Fehlermeldung</th>';
+            html += '</tr></thead><tbody>';
+            errors.forEach(e => {
+                html += '<tr style="background:rgba(248,81,73,0.08)">';
+                html += '<td>' + esc(e.event_time) + '</td>';
+                html += '<td class="cell-crit">' + esc(e.error_text || e.message) + '</td>';
+                html += '</tr>';
+            });
+            html += '</tbody></table>';
+        }
+
+        // Conflicts
+        if (conflicts.length > 0) {
+            html += '<h5 style="color:var(--accent-yellow);font-size:12px;margin:12px 0 4px;">Konflikte (' + conflicts.length + ')</h5>';
+            html += '<table class="cd-table"><thead><tr>';
+            html += '<th>Tabelle</th><th>Typ</th><th>Reason</th><th>Zeitpunkt</th>';
+            html += '</tr></thead><tbody>';
+            conflicts.forEach(c => {
+                html += '<tr>';
+                html += '<td>' + esc(c.conflict_table) + '</td>';
+                html += '<td>' + esc(c.conflict_type_text) + '</td>';
+                html += '<td>' + esc(c.reason_text) + '</td>';
+                html += '<td>' + esc(c.create_time) + '</td>';
+                html += '</tr>';
+            });
+            html += '</tbody></table>';
+        }
+
         wrap.innerHTML = html;
         attachCellHandlers(wrap);
     }

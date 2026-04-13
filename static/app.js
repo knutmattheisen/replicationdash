@@ -191,7 +191,6 @@
             return;
         }
 
-        // Sort nodes by weight (publisher first, then subscribers)
         const nodes = [...topo.nodes].sort((a, b) => a.weight - b.weight);
         const links = topo.links || [];
 
@@ -202,18 +201,22 @@
         (cards || []).forEach(c => {
             if (c.level === 'red') {
                 nodeStatus[c.subscriber] = 'red';
-                // Publisher is affected too if any sub is red
-                nodes.forEach(n => {
-                    if (n.role === 'publisher_distributor') {
-                        if (nodeStatus[n.server_name] !== 'red') {
-                            nodeStatus[n.server_name] = worstLevel(nodeStatus[n.server_name], 'yellow');
-                        }
-                    }
-                });
             } else if (c.level === 'yellow') {
                 nodeStatus[c.subscriber] = worstLevel(nodeStatus[c.subscriber], 'yellow');
             }
         });
+
+        // Publisher gets worst of all subscribers
+        const pubNode = nodes.find(n => n.role === 'publisher_distributor' || n.role === 'publisher');
+        const subNodes = nodes.filter(n => n.role === 'subscriber');
+
+        if (pubNode) {
+            let pubStatus = 'green';
+            subNodes.forEach(s => {
+                pubStatus = worstLevel(pubStatus, nodeStatus[s.server_name] || 'green');
+            });
+            nodeStatus[pubNode.server_name] = pubStatus;
+        }
 
         const roleIcons = {
             'publisher_distributor': '🖥️',
@@ -222,26 +225,23 @@
             'subscriber': '📥'
         };
 
-        // Find publisher (first node)
-        const pubNode = nodes.find(n => n.role === 'publisher_distributor' || n.role === 'publisher');
-        const subNodes = nodes.filter(n => n.role === 'subscriber');
+        // Star layout: publisher on top, subscribers below
+        let html = '<div class="topo-star">';
 
-        let html = '';
-
-        // Publisher node
+        // Publisher (center top)
         if (pubNode) {
             const st = nodeStatus[pubNode.server_name] || 'green';
+            html += '<div class="topo-star-hub">';
             html += renderTopoNode(pubNode, st, roleIcons);
+            html += '</div>';
         }
 
-        // For each subscriber: arrows + node
+        // Subscriber row
+        html += '<div class="topo-star-spokes">';
         subNodes.forEach(sub => {
             const st = nodeStatus[sub.server_name] || 'green';
 
-            // Find links for this subscriber
-            const subLinks = links.filter(l => l.to === sub.server_name);
-
-            // Determine arrow statuses from cards
+            // Determine arrow statuses from cards for this subscriber
             let uploadStatus = 'ok';
             let downloadStatus = 'ok';
             (cards || []).forEach(c => {
@@ -251,24 +251,27 @@
                 }
             });
 
-            // Arrows
-            html += '<div class="topo-arrows">';
-            html += '<div class="topo-arrow" data-status="' + downloadStatus + '">';
-            html += '<span class="topo-arrow-label">Download</span>';
-            html += '<span class="topo-arrow-head">→</span>';
-            html += '<span class="topo-arrow-line"></span>';
+            html += '<div class="topo-spoke">';
+
+            // Vertical arrows
+            html += '<div class="topo-arrows-vertical">';
+            html += '<div class="topo-arrow-v" data-status="' + downloadStatus + '">';
+            html += '<span class="topo-arrow-label">▼ Down</span>';
+            html += '<div class="topo-arrow-line-v"></div>';
             html += '</div>';
-            html += '<div class="topo-arrow" data-status="' + uploadStatus + '">';
-            html += '<span class="topo-arrow-line"></span>';
-            html += '<span class="topo-arrow-head">←</span>';
-            html += '<span class="topo-arrow-label">Upload</span>';
+            html += '<div class="topo-arrow-v" data-status="' + uploadStatus + '">';
+            html += '<div class="topo-arrow-line-v"></div>';
+            html += '<span class="topo-arrow-label">▲ Up</span>';
             html += '</div>';
             html += '</div>';
 
             // Subscriber node
             html += renderTopoNode(sub, st, roleIcons);
+            html += '</div>';
         });
+        html += '</div>';
 
+        html += '</div>';
         container.innerHTML = html;
     }
 

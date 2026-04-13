@@ -40,6 +40,7 @@ WHERE a.subscriber_name IS NOT NULL
 ORDER BY a.publication, a.subscriber_name;
 `
 
+// Current status per agent (latest session only, with recent history)
 const queryLatencySessions = `
 SELECT
     a.publication                    AS publication_name,
@@ -47,20 +48,6 @@ SELECT
     a.subscriber_db                  AS subscriber_db,
     s.session_id,
     s.agent_id,
-    s.start_time,
-    DATEADD(SECOND, s.duration, s.start_time) AS end_time,
-    s.duration                       AS duration_seconds,
-    s.delivery_rate,
-    s.upload_inserts,
-    s.upload_updates,
-    s.upload_deletes,
-    s.upload_conflicts,
-    s.download_inserts,
-    s.download_updates,
-    s.download_deletes,
-    s.download_conflicts,
-    s.schema_changes,
-    (ISNULL(s.upload_conflicts, 0) + ISNULL(s.download_conflicts, 0)) AS error_count,
     s.runstatus                      AS run_status,
     CASE s.runstatus
         WHEN 1 THEN 'Started'
@@ -69,23 +56,51 @@ SELECT
         WHEN 4 THEN 'Idle'
         WHEN 5 THEN 'Retry'
         WHEN 6 THEN 'Failed'
-        ELSE 'Unknown(' + CAST(s.runstatus AS VARCHAR) + ')'
+        ELSE 'Unknown'
     END                              AS run_status_text,
-    ISNULL(h.comments, '')           AS last_message
-FROM MSmerge_sessions s
+    s.upload_inserts,
+    s.upload_updates,
+    s.upload_deletes,
+    s.upload_conflicts,
+    s.download_inserts,
+    s.download_updates,
+    s.download_deletes,
+    s.download_conflicts,
+    s.delivery_rate,
+    s.start_time,
+    s.duration                       AS duration_seconds
+FROM MSmerge_agents a
+INNER JOIN MSmerge_sessions s
+    ON a.id = s.agent_id
+WHERE s.session_id = (
+    SELECT MAX(s2.session_id)
+    FROM MSmerge_sessions s2
+    WHERE s2.agent_id = a.id
+)
+AND a.subscriber_name IS NOT NULL
+AND a.subscriber_name <> '';
+`
+
+// Recent history entries (last 60 min) – the actual sync cycle messages and errors
+const queryRecentHistory = `
+SELECT
+    a.publication                    AS publication_name,
+    a.subscriber_name                AS subscriber,
+    h.session_id,
+    h.time                           AS event_time,
+    h.comments                       AS message,
+    h.error_id,
+    ISNULL(e.error_text, '')         AS error_text,
+    ISNULL(e.error_code, 0)          AS error_code
+FROM MSmerge_history h
 INNER JOIN MSmerge_agents a
-    ON s.agent_id = a.id
-OUTER APPLY (
-    SELECT TOP 1 comments
-    FROM MSmerge_history mh
-    WHERE mh.session_id = s.session_id
-    ORDER BY mh.time DESC
-) h
-WHERE s.start_time >= DATEADD(MINUTE, -60, GETDATE())
-   OR s.runstatus = 3
-   OR s.runstatus = 1
-   OR DATEADD(SECOND, s.duration, s.start_time) >= DATEADD(MINUTE, -60, GETDATE())
-ORDER BY s.start_time DESC;
+    ON h.agent_id = a.id
+LEFT JOIN MSrepl_errors e
+    ON h.error_id = e.id
+WHERE h.time >= DATEADD(MINUTE, -60, GETDATE())
+AND a.subscriber_name IS NOT NULL
+AND a.subscriber_name <> ''
+ORDER BY h.time DESC;
 `
 
 const queryConflicts = `
@@ -408,10 +423,13 @@ type DashboardData struct {
 	Topology         Topology               `json:"topology"`
 	Cards            []PubSubCard           `json:"cards"`
 	Sessions         []map[string]any       `json:"sessions"`
+	History          []map[string]any       `json:"history"`
 	Conflicts        []map[string]any       `json:"conflicts"`
 	Blocking         []map[string]any       `json:"blocking"`
 	ConflictCount    int                    `json:"conflict_count"`
 	SessionCount     int                    `json:"session_count"`
+	HistoryCount     int                    `json:"history_count"`
+	ErrorCount       int                    `json:"error_count"`
 	BlockingCount    int                    `json:"blocking_count"`
 	FailedSessions   int                    `json:"failed_sessions"`
 	RootCause        *RootCauseAnalysis     `json:"root_cause"`
@@ -1096,9 +1114,24 @@ func fetchRealData(st *ServerState) (*DashboardData, error) {
 		}
 	}
 
+	// Current agent status (latest session per agent)
 	sessions, err := executeQuery(distDB, queryLatencySessions)
 	if err != nil {
 		return nil, fmt.Errorf("sessions query: %w", err)
+	}
+
+	// Recent history (last 60 min – actual sync messages and errors)
+	history, err := executeQuery(distDB, queryRecentHistory)
+	if err != nil {
+		history = []map[string]any{}
+	}
+
+	// Count errors in history
+	errorCount := 0
+	for _, h := range history {
+		if toInt(h["error_id"]) > 0 {
+			errorCount++
+		}
 	}
 
 	pubConnStr := buildConnString(sc, sc.PubDB)
@@ -1147,10 +1180,13 @@ func fetchRealData(st *ServerState) (*DashboardData, error) {
 		Topology:         *topo,
 		Cards:            cards,
 		Sessions:         sessions,
+		History:          history,
 		Conflicts:        conflicts,
 		Blocking:         blocking,
 		ConflictCount:    len(conflicts),
 		SessionCount:     len(sessions),
+		HistoryCount:     len(history),
+		ErrorCount:       errorCount,
 		BlockingCount:    len(blocking),
 		FailedSessions:   failedCount,
 		RootCause:        rootCause,
@@ -1352,6 +1388,47 @@ func generateMockData(serverName string) *DashboardData {
 		})
 	}
 
+	// Mock history entries (recent sync messages)
+	mockHistory := make([]map[string]any, 0)
+	for _, pair := range mockPairs {
+		for i := 0; i < 2+randInt(4); i++ {
+			errId := 0
+			errText := ""
+			msg := randChoice([]string{
+				"Es wird 60 Sekunde(n) gewartet, bevor weitere Änderungen abgerufen werden",
+				"Upload: 42 Einfügungen, 15 Aktualisierungen, 0 Löschungen",
+				"Download: 128 Einfügungen, 33 Aktualisierungen, 2 Löschungen",
+				"Der Mergeprozess wurde erfolgreich abgeschlossen.",
+			})
+			if randInt(8) == 0 {
+				errId = 1000 + randInt(500)
+				errText = randChoice([]string{
+					"Vom Mergeprozess konnte eine Abfrage nicht ausgeführt werden, da für die Abfrage ein Timeout aufgetreten ist.",
+					"Der Prozess konnte keine Verbindung mit Subscriber herstellen.",
+					"Deadlock beim Hochladen von Änderungen erkannt.",
+				})
+				msg = errText
+			}
+			mockHistory = append(mockHistory, map[string]any{
+				"publication_name": pair.pub,
+				"subscriber":       pair.sub,
+				"session_id":       1000 + randInt(100),
+				"event_time":       now.Add(-time.Duration(randInt(55)+1) * time.Minute).Format("2006-01-02 15:04:05"),
+				"message":          msg,
+				"error_id":         errId,
+				"error_text":       errText,
+				"error_code":       0,
+			})
+		}
+	}
+
+	mockErrorCount := 0
+	for _, h := range mockHistory {
+		if toInt(h["error_id"]) > 0 {
+			mockErrorCount++
+		}
+	}
+
 	cards := buildCards(sessions, conflicts, blocking, &mockTopology)
 	rootCause := analyzeRootCause(sessions, conflicts, blocking)
 	health := assessHealth(cards, sessions, conflicts, blocking)
@@ -1362,10 +1439,13 @@ func generateMockData(serverName string) *DashboardData {
 		Topology:         mockTopology,
 		Cards:            cards,
 		Sessions:         sessions,
+		History:          mockHistory,
 		Conflicts:        conflicts,
 		Blocking:         blocking,
 		ConflictCount:    len(conflicts),
 		SessionCount:     len(sessions),
+		HistoryCount:     len(mockHistory),
+		ErrorCount:       mockErrorCount,
 		BlockingCount:    len(blocking),
 		FailedSessions:   failedCount,
 		RootCause:        rootCause,

@@ -22,6 +22,7 @@
         setupServerControl();
         setupModal();
         setupTroubleshootingPanel();
+        setupCardDetailPanel();
         setupColumnResize();
         setupSectionToggles();
         fetchData();
@@ -313,7 +314,7 @@
 
         let html = '';
         cards.forEach(c => {
-            html += '<div class="status-card" data-level="' + c.level + '">';
+            html += '<div class="status-card" data-level="' + c.level + '" data-pub="' + esc(c.publication) + '" data-sub="' + esc(c.subscriber) + '">';
 
             html += '<div class="card-header">';
             html += '<div class="card-pub-name">' + esc(c.publication) + '</div>';
@@ -353,6 +354,14 @@
         });
 
         container.innerHTML = html;
+
+        // Click on card → open detail panel
+        container.querySelectorAll('.status-card[data-pub]').forEach(el => {
+            el.style.cursor = 'pointer';
+            el.addEventListener('click', () => {
+                openCardDetail(el.dataset.pub, el.dataset.sub);
+            });
+        });
     }
 
     function formatDuration(seconds) {
@@ -622,6 +631,219 @@
         const el = $('#modal-error');
         el.textContent = msg;
         el.classList.remove('hidden');
+    }
+
+    // ── Card Detail Panel ─────────────────────────────────────────
+    function setupCardDetailPanel() {
+        $('#cd-close').addEventListener('click', closeCardDetail);
+    }
+
+    function openCardDetail(pub, sub) {
+        if (!currentData) return;
+
+        const card = (currentData.cards || []).find(c => c.publication === pub && c.subscriber === sub);
+        const sessions = (currentData.sessions || []).filter(s => s.publication_name === pub && s.subscriber === sub);
+        const conflicts = (currentData.conflicts || []).filter(c => c.origin_datasource === sub);
+        const blocking = (currentData.blocking || []).filter(b => {
+            const prog = (b.blocked_program || '').toLowerCase();
+            return prog.includes('replmerg') || prog.includes('repl-merge');
+        });
+
+        // Title + badge
+        $('#cd-title').textContent = pub + ' → ' + sub;
+        const badge = $('#cd-badge');
+        if (card) {
+            badge.textContent = card.status_text;
+            badge.className = 'card-status-badge ' + card.status_class;
+        }
+
+        // Recommendation
+        const recEl = $('#cd-recommendation');
+        if (card && card.level !== 'green') {
+            recEl.classList.remove('hidden', 'rc-ok', 'rc-warn', 'rc-crit');
+            const rcLevel = card.level === 'red' ? 'rc-crit' : 'rc-warn';
+            recEl.classList.add(rcLevel);
+            recEl.innerHTML = buildRecommendation(card, sessions, conflicts, blocking);
+        } else if (card && card.level === 'green') {
+            recEl.classList.remove('hidden', 'rc-warn', 'rc-crit');
+            recEl.classList.add('rc-ok');
+            recEl.innerHTML = '<div class="cd-rec-title rc-ok">✓ Alles in Ordnung</div>' +
+                '<div class="cd-rec-text">Keine Fehler, keine kritischen Konflikte, keine Blockaden für diese Verbindung.</div>';
+        } else {
+            recEl.classList.add('hidden');
+        }
+
+        // Sessions table
+        const sessCount = $('#cd-session-count');
+        sessCount.textContent = sessions.length;
+        sessCount.className = 'badge' + (sessions.some(s => s.run_status === 6) ? ' crit' : '');
+        renderCardSessions(sessions);
+
+        // Conflicts table
+        const confCount = $('#cd-conflict-count');
+        confCount.textContent = conflicts.length;
+        confCount.className = 'badge' + (conflicts.length >= 6 ? ' warn' : '');
+        renderCardConflicts(conflicts);
+
+        // Blocking table
+        const blockCount = $('#cd-blocking-count');
+        blockCount.textContent = blocking.length;
+        blockCount.className = 'badge' + (blocking.length > 0 ? ' crit' : '');
+        renderCardBlocking(blocking);
+
+        // Show panel
+        const panel = $('#card-detail-panel');
+        panel.classList.remove('hidden');
+        panel.offsetHeight;
+        panel.classList.add('visible');
+    }
+
+    function closeCardDetail() {
+        const panel = $('#card-detail-panel');
+        panel.classList.remove('visible');
+        setTimeout(() => panel.classList.add('hidden'), 250);
+    }
+
+    function buildRecommendation(card, sessions, conflicts, blocking) {
+        let title = '';
+        let text = '';
+        const rcClass = card.level === 'red' ? 'rc-crit' : 'rc-warn';
+
+        // Failed sessions
+        const failedSessions = sessions.filter(s => s.run_status === 6);
+        if (failedSessions.length > 0) {
+            title = '⚠ ' + failedSessions.length + ' fehlgeschlagene Session(s)';
+            const lastMsg = failedSessions[0].last_message || '';
+            if (lastMsg.toLowerCase().includes('deadlock')) {
+                text = 'Deadlock während der Synchronisation. Konkurrierende Zugriffe zwischen Applikation und Merge-Agent. Indizes und Zugriffsmuster prüfen.';
+            } else if (lastMsg.toLowerCase().includes('timeout')) {
+                text = 'Timeout – Server möglicherweise überlastet oder Netzwerk-Latenz zu hoch. Agent-Profil und QueryTimeout prüfen.';
+            } else if (lastMsg.toLowerCase().includes('connect')) {
+                text = 'Verbindungsfehler zum Subscriber. Netzwerk, DNS und SQL Server-Dienst auf dem Subscriber prüfen.';
+            } else {
+                text = 'Fehlermeldung: "' + lastMsg.substring(0, 200) + '". SQL Server Agent Job-Verlauf prüfen.';
+            }
+            return '<div class="cd-rec-title ' + rcClass + '">' + esc(title) + '</div><div class="cd-rec-text">' + esc(text) + '</div>';
+        }
+
+        // Retry
+        const retrySessions = sessions.filter(s => s.run_status === 5);
+        if (retrySessions.length > 0) {
+            title = '⟳ Session im Retry-Modus';
+            text = 'Der Merge-Agent versucht erneut zu synchronisieren. Wenn Retries häufen, Verbose-Logging aktivieren: replmerg.exe -OutputVerboseLevel 2';
+            return '<div class="cd-rec-title ' + rcClass + '">' + esc(title) + '</div><div class="cd-rec-text">' + esc(text) + '</div>';
+        }
+
+        // Blocking
+        if (blocking.length > 0) {
+            const b = blocking[0];
+            const prog = b.blocker_program || 'Unbekannt';
+            const host = b.blocker_host || '?';
+            const login = b.blocker_login || '?';
+            title = '🔒 Merge-Agent wird blockiert';
+            if (prog.toLowerCase().includes('management studio') || prog.toLowerCase().includes('azdata')) {
+                text = 'Blockiert durch ' + prog + ' auf ' + host + ' (' + login + '). Vermutlich offene Transaktion ohne COMMIT. Kollegen kontaktieren.';
+            } else {
+                text = 'Blockiert durch ' + prog + ' auf ' + host + ' (' + login + '). Wartzeit: ' + Math.round((b.wait_time_ms || 0) / 1000) + 's. SQL-Text der blockierenden Session prüfen.';
+            }
+            return '<div class="cd-rec-title ' + rcClass + '">' + esc(title) + '</div><div class="cd-rec-text">' + esc(text) + '</div>';
+        }
+
+        // High conflicts
+        if (conflicts.length >= 6) {
+            title = '⚡ Erhöhte Konfliktrate: ' + conflicts.length + ' Konflikte';
+            text = 'Mehrere Standorte ändern dieselben Datensätze. Datenhoheit prüfen – wer darf welche Zeilen ändern? Column-Level Tracking erwägen.';
+            return '<div class="cd-rec-title ' + rcClass + '">' + esc(title) + '</div><div class="cd-rec-text">' + esc(text) + '</div>';
+        }
+
+        // High latency
+        if (card.max_duration > 300) {
+            title = '🐌 Hohe Latenz: ' + formatDuration(card.max_duration);
+            const totalRows = card.total_uploads + card.total_downloads;
+            if (totalRows > 10000) {
+                text = 'Großes Datenvolumen (' + totalRows.toLocaleString('de-DE') + ' Zeilen). Massen-Operationen in Wartungsfenster verlegen oder Agent-Profil optimieren.';
+            } else {
+                text = 'Wenige Daten aber hohe Latenz – deutet auf I/O-Engpass, Netzwerkprobleme oder Server-Überlastung hin.';
+            }
+            return '<div class="cd-rec-title ' + rcClass + '">' + esc(title) + '</div><div class="cd-rec-text">' + esc(text) + '</div>';
+        }
+
+        return '';
+    }
+
+    function renderCardSessions(sessions) {
+        const wrap = $('#cd-sessions');
+        if (sessions.length === 0) {
+            wrap.innerHTML = '<div class="cd-empty">Keine Sessions für diese Verbindung</div>';
+            return;
+        }
+        let html = '<table class="cd-table"><thead><tr>';
+        html += '<th>Status</th><th>Dauer</th><th>Up ↑</th><th>Down ↓</th><th>Errors</th><th>Start</th><th>Message</th>';
+        html += '</tr></thead><tbody>';
+        sessions.forEach(s => {
+            const cls = getStatusClass(s.run_status_text);
+            const ups = (s.upload_inserts || 0) + (s.upload_updates || 0) + (s.upload_deletes || 0);
+            const downs = (s.download_inserts || 0) + (s.download_updates || 0) + (s.download_deletes || 0);
+            html += '<tr>';
+            html += '<td class="' + cls + '">' + esc(s.run_status_text) + '</td>';
+            html += '<td>' + formatDuration(s.duration_seconds) + '</td>';
+            html += '<td>' + fmtNum(ups) + '</td>';
+            html += '<td>' + fmtNum(downs) + '</td>';
+            html += '<td' + (s.error_count > 0 ? ' style="color:var(--accent-red);font-weight:600"' : '') + '>' + (s.error_count || 0) + '</td>';
+            html += '<td>' + esc(s.start_time) + '</td>';
+            html += '<td>' + esc(s.last_message) + '</td>';
+            html += '</tr>';
+        });
+        html += '</tbody></table>';
+        wrap.innerHTML = html;
+        attachCellHandlers(wrap);
+    }
+
+    function renderCardConflicts(conflicts) {
+        const wrap = $('#cd-conflicts');
+        if (conflicts.length === 0) {
+            wrap.innerHTML = '<div class="cd-empty">Keine Konflikte für diesen Subscriber</div>';
+            return;
+        }
+        let html = '<table class="cd-table"><thead><tr>';
+        html += '<th>Tabelle</th><th>Typ</th><th>Reason</th><th>Zeitpunkt</th>';
+        html += '</tr></thead><tbody>';
+        conflicts.forEach(c => {
+            html += '<tr>';
+            html += '<td>' + esc(c.conflict_table) + '</td>';
+            html += '<td>' + esc(c.conflict_type_text) + '</td>';
+            html += '<td>' + esc(c.reason_text) + '</td>';
+            html += '<td>' + esc(c.create_time) + '</td>';
+            html += '</tr>';
+        });
+        html += '</tbody></table>';
+        wrap.innerHTML = html;
+        attachCellHandlers(wrap);
+    }
+
+    function renderCardBlocking(blocking) {
+        const wrap = $('#cd-blocking');
+        if (blocking.length === 0) {
+            wrap.innerHTML = '<div class="cd-empty">Keine Blockaden für Replikations-Agenten</div>';
+            return;
+        }
+        let html = '<table class="cd-table"><thead><tr>';
+        html += '<th>Blocked</th><th>Blocker</th><th>Wait</th><th>Blocker Prog</th><th>Host</th><th>Login</th><th>SQL</th>';
+        html += '</tr></thead><tbody>';
+        blocking.forEach(b => {
+            html += '<tr>';
+            html += '<td>SPID ' + (b.blocked_spid || '') + '</td>';
+            html += '<td>SPID ' + (b.blocking_spid || '') + '</td>';
+            html += '<td>' + fmtNum(b.wait_time_ms) + ' ms</td>';
+            html += '<td>' + esc(b.blocker_program) + '</td>';
+            html += '<td>' + esc(b.blocker_host) + '</td>';
+            html += '<td>' + esc(b.blocker_login) + '</td>';
+            html += '<td>' + esc(b.blocker_sql_text) + '</td>';
+            html += '</tr>';
+        });
+        html += '</tbody></table>';
+        wrap.innerHTML = html;
+        attachCellHandlers(wrap);
     }
 
     // ── Troubleshooting Panel ──────────────────────────────────

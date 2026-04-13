@@ -1,4 +1,4 @@
-# ReplicationDash v0.2.3 — SQL Server Replication Dashboard
+# ReplicationDash v0.2.6 — SQL Server Replication Dashboard
 
 Portable, zero-install DBA tool for near real-time monitoring of SQL Server Merge Replication.
 Single Windows executable. No Node.js, Python, .NET runtime or installer required.

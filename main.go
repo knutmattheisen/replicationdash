@@ -40,7 +40,6 @@ WHERE a.subscriber_name IS NOT NULL
 ORDER BY a.publication, a.subscriber_name;
 `
 
-// Current status per agent (latest session only, with recent history)
 const queryLatencySessions = `
 SELECT
     a.publication                    AS publication_name,
@@ -81,7 +80,6 @@ AND a.subscriber_name IS NOT NULL
 AND a.subscriber_name <> '';
 `
 
-// Recent history entries (last 60 min) – the actual sync cycle messages and errors
 const queryRecentHistory = `
 SELECT
     a.publication                    AS publication_name,
@@ -89,7 +87,7 @@ SELECT
     h.session_id,
     h.time                           AS event_time,
     h.comments                       AS message,
-    h.error_id,
+    ISNULL(h.error_id, 0)            AS error_id,
     ISNULL(e.error_text, '')         AS error_text,
     ISNULL(e.error_code, 0)          AS error_code
 FROM MSmerge_history h
@@ -97,6 +95,7 @@ INNER JOIN MSmerge_agents a
     ON h.agent_id = a.id
 LEFT JOIN MSrepl_errors e
     ON h.error_id = e.id
+    AND h.error_id > 0
 WHERE h.time >= DATEADD(MINUTE, -60, GETDATE())
 AND a.subscriber_name IS NOT NULL
 AND a.subscriber_name <> ''
@@ -384,24 +383,24 @@ type Topology struct {
 }
 
 type PubSubCard struct {
-	Key             string `json:"key"`
-	Publication     string `json:"publication"`
-	Subscriber      string `json:"subscriber"`
-	Level           string `json:"level"`
-	StatusText      string `json:"status_text"`
-	StatusClass     string `json:"status_class"`
-	MaxDuration     int    `json:"max_duration"`
-	TotalErrors     int    `json:"total_errors"`
-	ConflictCount   int    `json:"conflict_count"`
-	TotalUploads    int    `json:"total_uploads"`
-	TotalDownloads  int    `json:"total_downloads"`
-	LastMessage     string `json:"last_message"`
-	LastStatus      int    `json:"last_status"`
-	UploadStatus    string `json:"upload_status"`
-	DownloadStatus  string `json:"download_status"`
-	IsBlocked       bool   `json:"is_blocked"`
-	RootCause       string `json:"root_cause"`
-	RootCauseType   string `json:"root_cause_type"`
+	Key            string `json:"key"`
+	Publication    string `json:"publication"`
+	Subscriber     string `json:"subscriber"`
+	Level          string `json:"level"`
+	StatusText     string `json:"status_text"`
+	StatusClass    string `json:"status_class"`
+	MaxDuration    int    `json:"max_duration"`
+	TotalErrors    int    `json:"total_errors"`
+	ConflictCount  int    `json:"conflict_count"`
+	TotalUploads   int    `json:"total_uploads"`
+	TotalDownloads int    `json:"total_downloads"`
+	LastMessage    string `json:"last_message"`
+	LastStatus     int    `json:"last_status"`
+	UploadStatus   string `json:"upload_status"`
+	DownloadStatus string `json:"download_status"`
+	IsBlocked      bool   `json:"is_blocked"`
+	RootCause      string `json:"root_cause"`
+	RootCauseType  string `json:"root_cause_type"`
 }
 
 type HealthStatus struct {
@@ -528,6 +527,22 @@ func buildConnString(sc ServerConfig, dbName string) string {
 	)
 }
 
+func openDB(sc ServerConfig, dbName string, pingCtx context.Context) (*sql.DB, error) {
+	connStr := buildConnString(sc, dbName)
+	db, err := sql.Open("sqlserver", connStr)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(5)
+	db.SetMaxIdleConns(2)
+	db.SetConnMaxLifetime(5 * time.Minute)
+	if err := db.PingContext(pingCtx); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return db, nil
+}
+
 func getOrCreateState(serverName string) (*ServerState, error) {
 	stateMu.RLock()
 	st, ok := serverStates[serverName]
@@ -555,19 +570,11 @@ func getOrCreateState(serverName string) (*ServerState, error) {
 		return st, nil
 	}
 
-	connStr := buildConnString(*sc, sc.DistDB)
-	db, err := sql.Open("sqlserver", connStr)
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(5)
-	db.SetMaxIdleConns(2)
-	db.SetConnMaxLifetime(5 * time.Minute)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := db.PingContext(ctx); err != nil {
-		db.Close()
+
+	db, err := openDB(*sc, sc.DistDB, ctx)
+	if err != nil {
 		return nil, fmt.Errorf("cannot connect to %s: %v", serverName, err)
 	}
 
@@ -596,13 +603,10 @@ func currentState() (*ServerState, error) {
 }
 
 // ───────────────────────────────────────────────────────────────
-// Query Execution
+// Query Execution – uses caller-supplied context
 // ───────────────────────────────────────────────────────────────
 
-func executeQuery(db *sql.DB, query string) ([]map[string]any, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
+func executeQueryCtx(ctx context.Context, db *sql.DB, query string) ([]map[string]any, error) {
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -653,7 +657,6 @@ func analyzeRootCause(sessions []map[string]any, conflicts []map[string]any, blo
 		return nil
 	}
 
-	// Check blocking first – most actionable
 	for _, b := range blocking {
 		replRelated := toInt(b["replication_related"]) == 1
 		if !replRelated {
@@ -664,7 +667,6 @@ func analyzeRootCause(sessions []map[string]any, conflicts []map[string]any, blo
 		blockerLogin := toString(b["blocker_login"])
 		blockerStatus := toString(b["blocker_status"])
 
-		// SSMS / developer tools without commit
 		if strings.Contains(strings.ToLower(blockerProg), "management studio") ||
 			strings.Contains(strings.ToLower(blockerProg), "azdata") ||
 			strings.Contains(strings.ToLower(blockerProg), "azure data studio") {
@@ -678,7 +680,6 @@ func analyzeRootCause(sessions []map[string]any, conflicts []map[string]any, blo
 			}
 		}
 
-		// ETL or app blocking
 		if strings.Contains(strings.ToLower(blockerProg), "etl") ||
 			strings.Contains(strings.ToLower(blockerProg), "dtsx") ||
 			strings.Contains(strings.ToLower(blockerProg), "ssis") {
@@ -692,7 +693,6 @@ func analyzeRootCause(sessions []map[string]any, conflicts []map[string]any, blo
 			}
 		}
 
-		// sleeping blocker = someone left a transaction open
 		if strings.EqualFold(blockerStatus, "sleeping") {
 			return &RootCauseAnalysis{
 				Type:  "user",
@@ -704,7 +704,6 @@ func analyzeRootCause(sessions []map[string]any, conflicts []map[string]any, blo
 			}
 		}
 
-		// Generic blocking – could be systemic
 		waitMs := toInt(b["wait_time_ms"])
 		if waitMs > 30000 {
 			return &RootCauseAnalysis{
@@ -718,7 +717,6 @@ func analyzeRootCause(sessions []map[string]any, conflicts []map[string]any, blo
 		}
 	}
 
-	// Check conflicts
 	if len(conflicts) > 5 {
 		return &RootCauseAnalysis{
 			Type:  "user",
@@ -730,9 +728,7 @@ func analyzeRootCause(sessions []map[string]any, conflicts []map[string]any, blo
 		}
 	}
 
-	// Check session patterns
 	failedCount := 0
-	highLatencyCount := 0
 	highVolumeHighLatency := false
 	lowVolumehighLatency := false
 
@@ -768,7 +764,6 @@ func analyzeRootCause(sessions []map[string]any, conflicts []map[string]any, blo
 
 		dur := toInt(s["duration_seconds"])
 		if dur > 300 {
-			highLatencyCount++
 			totalRows := toInt(s["upload_inserts"]) + toInt(s["upload_updates"]) + toInt(s["download_inserts"]) + toInt(s["download_updates"])
 			if totalRows > 10000 {
 				highVolumeHighLatency = true
@@ -786,7 +781,6 @@ func analyzeRootCause(sessions []map[string]any, conflicts []map[string]any, blo
 			Explanation: "Hohe Latenz bei großem Datenvolumen. Vermutlich Massen-Operation zur falschen Zeit. Batch-Jobs in Wartungsfenster verlegen.",
 		}
 	}
-
 	if lowVolumehighLatency {
 		return &RootCauseAnalysis{
 			Type:        "system",
@@ -795,7 +789,6 @@ func analyzeRootCause(sessions []map[string]any, conflicts []map[string]any, blo
 			Explanation: "Hohe Latenz trotz weniger Daten. Deutet auf I/O-Engpass, Netzwerkprobleme oder Server-Überlastung hin.",
 		}
 	}
-
 	if failedCount > 0 {
 		return &RootCauseAnalysis{
 			Type:        "system",
@@ -839,28 +832,26 @@ func availableServerNames() []string {
 }
 
 // ───────────────────────────────────────────────────────────────
-// Build Cards with per-card blocking check and root cause
+// Build Cards
 // ───────────────────────────────────────────────────────────────
 
 func buildCards(sessions []map[string]any, conflicts []map[string]any, blocking []map[string]any, topo *Topology) []PubSubCard {
-	// Group sessions by pub+sub
 	type group struct {
-		pub, sub    string
-		sessions    []map[string]any
-		lastStatus  int
-		lastStart   string
-		maxDur      int
-		totalErrors int
-		totalUp     int
-		totalDown   int
-		lastMsg     string
-		uploadPhase bool
+		pub, sub      string
+		sessions      []map[string]any
+		lastStatus    int
+		lastStart     string
+		maxDur        int
+		totalErrors   int
+		totalUp       int
+		totalDown     int
+		lastMsg       string
+		uploadPhase   bool
 		downloadPhase bool
 	}
 
 	groups := map[string]*group{}
 
-	// Pre-populate from topology
 	if topo != nil {
 		for _, link := range topo.Links {
 			key := link.Publication + " → " + link.To
@@ -870,7 +861,6 @@ func buildCards(sessions []map[string]any, conflicts []map[string]any, blocking 
 		}
 	}
 
-	// Fill with session data
 	for _, s := range sessions {
 		pub := toString(s["publication_name"])
 		sub := toString(s["subscriber"])
@@ -906,14 +896,12 @@ func buildCards(sessions []map[string]any, conflicts []map[string]any, blocking 
 		}
 	}
 
-	// Count conflicts per origin
 	conflictCounts := map[string]int{}
 	for _, c := range conflicts {
 		origin := toString(c["origin_datasource"])
 		conflictCounts[origin]++
 	}
 
-	// Check which programs are blocked
 	blockedPrograms := map[string]bool{}
 	for _, b := range blocking {
 		if toInt(b["replication_related"]) == 1 {
@@ -923,13 +911,10 @@ func buildCards(sessions []map[string]any, conflicts []map[string]any, blocking 
 	}
 	hasReplBlocking := len(blockedPrograms) > 0
 
-	// Build cards
 	var cards []PubSubCard
 	for key, g := range groups {
 		confCount := conflictCounts[g.sub]
 
-		// Per-card level with proper conflict thresholds
-		// Conflicts: <6 = normal (green), 6-20 = yellow, 20+ = red
 		level := "green"
 		if g.lastStatus == 6 || g.totalErrors > 0 {
 			level = "red"
@@ -939,7 +924,6 @@ func buildCards(sessions []map[string]any, conflicts []map[string]any, blocking 
 			level = "yellow"
 		}
 
-		// Conflict thresholds (independent of other status)
 		if confCount >= 20 {
 			if level != "red" {
 				level = "red"
@@ -949,17 +933,13 @@ func buildCards(sessions []map[string]any, conflicts []map[string]any, blocking 
 				level = "yellow"
 			}
 		}
-		// <6 conflicts = normal, stays green
 
-		// No sessions at all
 		if len(g.sessions) == 0 {
 			level = "yellow"
 		}
 
-		// Badge must match the card level
 		statusText, statusClass := cardStatusWithLevel(g.lastStatus, g.totalErrors, g.maxDur, confCount, len(g.sessions) == 0, level)
 
-		// Upload/Download status
 		upStatus := "ok"
 		downStatus := "ok"
 		if g.lastStatus == 6 {
@@ -1044,7 +1024,6 @@ func assessHealth(cards []PubSubCard, sessions []map[string]any, conflicts []map
 	level := "green"
 	var details []string
 
-	// Global status = worst card status
 	for _, c := range cards {
 		if c.Level == "red" {
 			level = "red"
@@ -1053,7 +1032,6 @@ func assessHealth(cards []PubSubCard, sessions []map[string]any, conflicts []map
 		}
 	}
 
-	// Collect detail reasons
 	for _, c := range cards {
 		if c.Level == "red" {
 			details = append(details, fmt.Sprintf("%s → %s: %s", c.Publication, c.Subscriber, c.StatusText))
@@ -1096,37 +1074,38 @@ func assessHealth(cards []PubSubCard, sessions []map[string]any, conflicts []map
 }
 
 // ───────────────────────────────────────────────────────────────
-// Real Data Fetcher
+// Real Data Fetcher – single context for all queries
 // ───────────────────────────────────────────────────────────────
 
 func fetchRealData(st *ServerState) (*DashboardData, error) {
 	sc := st.config
-	distDB := st.db
-	if distDB == nil {
+	if st.db == nil {
 		return nil, fmt.Errorf("no database connection for %s", sc.Name)
 	}
 
-	// Topology discovery (once)
+	// Single timeout context for the entire fetch cycle
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	// Topology (cached after first discovery)
 	if st.topology == nil {
-		topo, err := discoverTopology(distDB, sc)
+		topo, err := discoverTopologyCtx(ctx, st.db, sc)
 		if err == nil {
 			st.topology = topo
 		}
 	}
 
-	// Current agent status (latest session per agent)
-	sessions, err := executeQuery(distDB, queryLatencySessions)
+	sessions, err := executeQueryCtx(ctx, st.db, queryLatencySessions)
 	if err != nil {
 		return nil, fmt.Errorf("sessions query: %w", err)
 	}
 
-	// Recent history (last 60 min – actual sync messages and errors)
-	history, err := executeQuery(distDB, queryRecentHistory)
+	history, err := executeQueryCtx(ctx, st.db, queryRecentHistory)
 	if err != nil {
+		log.Printf("history query error (non-fatal): %v", err)
 		history = []map[string]any{}
 	}
 
-	// Count errors in history
 	errorCount := 0
 	for _, h := range history {
 		if toInt(h["error_id"]) > 0 {
@@ -1134,28 +1113,34 @@ func fetchRealData(st *ServerState) (*DashboardData, error) {
 		}
 	}
 
-	pubConnStr := buildConnString(sc, sc.PubDB)
-	pubDB, err := sql.Open("sqlserver", pubConnStr)
+	// Publication DB – reuse context
+	pubDB, err := openDB(sc, sc.PubDB, ctx)
 	if err != nil {
-		return nil, fmt.Errorf("publication DB: %w", err)
+		log.Printf("pubDB connect error (non-fatal): %v", err)
 	}
-	defer pubDB.Close()
-
-	conflicts, err := executeQuery(pubDB, queryConflicts)
-	if err != nil {
-		conflicts = []map[string]any{}
+	conflicts := []map[string]any{}
+	if pubDB != nil {
+		defer pubDB.Close()
+		conflicts, err = executeQueryCtx(ctx, pubDB, queryConflicts)
+		if err != nil {
+			log.Printf("conflicts query error (non-fatal): %v", err)
+			conflicts = []map[string]any{}
+		}
 	}
 
-	masterConnStr := buildConnString(sc, "master")
-	masterDB, err := sql.Open("sqlserver", masterConnStr)
+	// Master DB – reuse context
+	masterDB, err := openDB(sc, "master", ctx)
 	if err != nil {
-		return nil, fmt.Errorf("master DB: %w", err)
+		log.Printf("masterDB connect error (non-fatal): %v", err)
 	}
-	defer masterDB.Close()
-
-	blocking, err := executeQuery(masterDB, queryBlocking)
-	if err != nil {
-		blocking = []map[string]any{}
+	blocking := []map[string]any{}
+	if masterDB != nil {
+		defer masterDB.Close()
+		blocking, err = executeQueryCtx(ctx, masterDB, queryBlocking)
+		if err != nil {
+			log.Printf("blocking query error (non-fatal): %v", err)
+			blocking = []map[string]any{}
+		}
 	}
 
 	failedCount := 0
@@ -1197,8 +1182,8 @@ func fetchRealData(st *ServerState) (*DashboardData, error) {
 	}, nil
 }
 
-func discoverTopology(db *sql.DB, sc ServerConfig) (*Topology, error) {
-	rows, err := executeQuery(db, queryTopology)
+func discoverTopologyCtx(ctx context.Context, db *sql.DB, sc ServerConfig) (*Topology, error) {
+	rows, err := executeQueryCtx(ctx, db, queryTopology)
 	if err != nil {
 		return nil, err
 	}
@@ -1215,7 +1200,6 @@ func discoverTopology(db *sql.DB, sc ServerConfig) (*Topology, error) {
 		pub := toString(r["publication_name"])
 		sub := toString(r["subscriber_server"])
 
-		// Publisher node
 		if _, ok := nodesMap[sn]; !ok {
 			nodesMap[sn] = TopologyNode{
 				ServerName: sn,
@@ -1225,7 +1209,6 @@ func discoverTopology(db *sql.DB, sc ServerConfig) (*Topology, error) {
 			}
 		}
 
-		// Subscriber node
 		if sub != "" {
 			if _, ok := nodesMap[sub]; !ok {
 				nodesMap[sub] = TopologyNode{
@@ -1252,7 +1235,7 @@ func discoverTopology(db *sql.DB, sc ServerConfig) (*Topology, error) {
 }
 
 // ───────────────────────────────────────────────────────────────
-// Mock Data – Fixed Topology
+// Mock Data
 // ───────────────────────────────────────────────────────────────
 
 func randInt(max int) int {
@@ -1270,7 +1253,6 @@ func randChoice(items []string) string {
 	return items[randInt(len(items))]
 }
 
-// Fixed mock topology – always the same structure
 var mockTopology = Topology{
 	Nodes: []TopologyNode{
 		{ServerName: "SRV-SQL-PUB", Role: "publisher_distributor", RoleLabel: "Verleger & Verteiler", Weight: 1},
@@ -1299,14 +1281,13 @@ var mockPairs = []mockPubSub{
 
 func generateMockData(serverName string) *DashboardData {
 	now := time.Now()
-	statuses := []int{2, 2, 2, 3, 5, 6} // weighted: mostly OK
+	statuses := []int{2, 2, 2, 3, 5, 6}
 	statusTexts := map[int]string{2: "Succeeded", 3: "InProgress", 5: "Retry", 6: "Failed"}
 	programs := []string{"replmerg.exe", "Microsoft SQL Server Management Studio", "azdata", "ETL_DailyLoad.dtsx", "MyApp.exe"}
 	waitTypes := []string{"LCK_M_X", "LCK_M_S", "LCK_M_U", "LCK_M_IX", "PAGEIOLATCH_SH"}
 	logins := []string{"DOMAIN\\svc_replication", "DOMAIN\\dev_mueller", "DOMAIN\\dev_schmidt", "sa", "DOMAIN\\etl_service"}
 	hosts := []string{"SRV-SQL-PUB", "WS-DEV-MUELLER", "WS-DEV-SCHMIDT", "SRV-ETL-01"}
 
-	// Generate sessions for each fixed pub/sub pair
 	sessions := make([]map[string]any, 0)
 	failedCount := 0
 
@@ -1349,7 +1330,6 @@ func generateMockData(serverName string) *DashboardData {
 		}
 	}
 
-	// Conflicts – fixed origins
 	conflictTypes := []string{"Update", "Delete", "Insert-Unique", "Upload-Delete"}
 	reasons := []string{"Publisher wins based on priority.", "Subscriber change was rejected.", "Unique key violation during merge upload."}
 	conflicts := make([]map[string]any, 0)
@@ -1363,9 +1343,8 @@ func generateMockData(serverName string) *DashboardData {
 		})
 	}
 
-	// Blocking – sometimes none, sometimes with repl involvement
 	blocking := make([]map[string]any, 0)
-	if randInt(3) == 0 { // 33% chance of blocking
+	if randInt(3) == 0 {
 		blockedProg := "replmerg.exe"
 		blockerProg := randChoice(programs[1:])
 		blocking = append(blocking, map[string]any{
@@ -1388,7 +1367,6 @@ func generateMockData(serverName string) *DashboardData {
 		})
 	}
 
-	// Mock history entries (recent sync messages)
 	mockHistory := make([]map[string]any, 0)
 	for _, pair := range mockPairs {
 		for i := 0; i < 2+randInt(4); i++ {
@@ -1550,17 +1528,10 @@ func handleAddServer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !strings.EqualFold(sc.AuthMode, "mock") {
-		connStr := buildConnString(sc, sc.DistDB)
-		db, err := sql.Open("sqlserver", connStr)
-		if err != nil {
-			errResponse(w, 500, "driver error: "+err.Error())
-			return
-		}
-		db.SetConnMaxLifetime(10 * time.Second)
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		if err := db.PingContext(ctx); err != nil {
-			db.Close()
+		db, err := openDB(sc, sc.DistDB, ctx)
+		if err != nil {
 			errResponse(w, 500, "connection failed: "+err.Error())
 			return
 		}
@@ -1589,7 +1560,10 @@ func handleAddServer(w http.ResponseWriter, r *http.Request) {
 	activeServer = sc.Name
 	stateMu.Unlock()
 
-	saveConfig()
+	if err := saveConfig(); err != nil {
+		log.Printf("saveConfig error: %v", err)
+	}
+
 	jsonResponse(w, map[string]string{"status": "ok", "server": sc.Name})
 }
 
@@ -1623,7 +1597,9 @@ func handleRemoveServer(w http.ResponseWriter, r *http.Request) {
 	}
 	stateMu.Unlock()
 
-	saveConfig()
+	if err := saveConfig(); err != nil {
+		log.Printf("saveConfig error: %v", err)
+	}
 	jsonResponse(w, map[string]string{"status": "ok"})
 }
 
@@ -1699,7 +1675,7 @@ func main() {
 	mux.Handle("/", http.FileServer(http.FS(staticFS)))
 
 	addr := fmt.Sprintf(":%d", globalConfig.ListenPort)
-	log.Printf("ReplicationDash v0.2.4 → http://localhost%s", addr)
+	log.Printf("ReplicationDash → http://localhost%s", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatal(err)
 	}
